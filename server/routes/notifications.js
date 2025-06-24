@@ -4,12 +4,13 @@ import Notification from '../models/notification.model.js';
 
 const router = Router();
 
-// GET unread notifications for the logged-in user
+// GET all recent notifications for the logged-in user (both read and unread)
 router.get('/', auth, async (req, res) => {
     try {
-        const notifications = await Notification.find({ user: req.user, isRead: false })
+        // MODIFICATION: Removed the `isRead: false` filter to fetch all recent notifications.
+        const notifications = await Notification.find({ user: req.user })
             .sort({ createdAt: -1 })
-            .limit(10);
+            .limit(10); // We still limit to the 10 most recent for performance.
         res.json(notifications);
     } catch (err) {
         res.status(500).json({ message: 'Server error fetching notifications.' });

@@ -1,4 +1,3 @@
-// src/components/AdminHeader.tsx
 import { useState, useEffect } from 'react';
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -18,6 +17,7 @@ import { fetchWithToken } from '@/lib/api';
 import { toast } from 'sonner';
 import { formatDistanceToNow } from 'date-fns';
 import { ModeToggle } from './mode-toggle';
+import { cn } from '@/lib/utils'; // Make sure cn is imported
 
 // Zod schema for settings form validation
 const settingsSchema = z.object({
@@ -31,11 +31,12 @@ const settingsSchema = z.object({
 
 type SettingsFormData = z.infer<typeof settingsSchema>;
 
-// Type for a single notification
+// MODIFICATION: Added `isRead` to the Notification interface
 interface Notification {
     _id: string;
     message: string;
     createdAt: string;
+    isRead: boolean;
 }
 
 export const AdminHeader = () => {
@@ -55,6 +56,9 @@ export const AdminHeader = () => {
       enabled: !!token,
       refetchInterval: 60000,
   });
+
+  // MODIFICATION: Calculate unread count separately for the badge.
+  const unreadCount = notifications?.filter(n => !n.isRead).length ?? 0;
 
   const updateProfileMutation = useMutation({
     mutationFn: (data: Partial<SettingsFormData>) => {
@@ -121,11 +125,12 @@ export const AdminHeader = () => {
                 <DropdownMenuTrigger asChild>
                     <Button variant="ghost" size="icon" className="relative">
                         <Bell className="w-5 h-5" />
-                        {notifications && notifications.length > 0 && (
+                        {/* MODIFICATION: Use unreadCount for the badge */}
+                        {unreadCount > 0 && (
                             <span className="absolute top-1.5 right-1.5 flex h-3 w-3">
                                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
                                 <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500 justify-center items-center text-white text-[9px]">
-                                  {notifications.length > 9 ? '9+' : notifications.length}
+                                  {unreadCount > 9 ? '9+' : unreadCount}
                                 </span>
                             </span>
                         )}
@@ -134,7 +139,8 @@ export const AdminHeader = () => {
                 <DropdownMenuContent align="end" className="w-80">
                     <DropdownMenuLabel className="flex justify-between items-center">
                         <span>Notifications</span>
-                        {notifications && notifications.length > 0 && (
+                        {/* MODIFICATION: Show "Mark all as read" only if there are unread items */}
+                        {unreadCount > 0 && (
                             <Button variant="ghost" size="sm" className="h-auto px-2 py-1 text-xs" onClick={() => markAsReadMutation.mutate()} disabled={markAsReadMutation.isPending}>
                                 <CheckCheck className="mr-1 h-3 w-3" /> Mark all as read
                             </Button>
@@ -145,7 +151,8 @@ export const AdminHeader = () => {
                         {notifications && notifications.length > 0 ? (
                             notifications.map(n => (
                                 <DropdownMenuItem key={n._id} onSelect={(e) => e.preventDefault()} className="flex-col items-start gap-1 whitespace-normal">
-                                    <p className="text-sm">{n.message}</p>
+                                    {/* MODIFICATION: Apply bold font weight to unread messages */}
+                                    <p className={cn("text-sm", !n.isRead && "font-semibold")}>{n.message}</p>
                                     <p className="text-xs text-muted-foreground">{formatDistanceToNow(new Date(n.createdAt), { addSuffix: true })}</p>
                                 </DropdownMenuItem>
                             ))
