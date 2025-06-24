@@ -1,0 +1,6 @@
+npm install axios
+npm install @google/generative-ai
+npm install jspdf @types/jspdf
+npm install puppeteer
+npm install @sendgrid/mail
+npm install date-fns
