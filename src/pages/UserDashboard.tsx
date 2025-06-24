@@ -19,7 +19,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Mail, FileText, Loader2, Calendar as CalendarIcon, AlertCircle, Bookmark, Newspaper } from 'lucide-react';
+import { Mail, FileText, Loader2, Calendar as CalendarIcon, AlertCircle, Bookmark, Newspaper, Send } from 'lucide-react';
 
 // --- Data Types ---
 interface ReceivedNewsletter {
@@ -88,12 +88,30 @@ const UserDashboard = () => {
     });
     const downloadPdfMutation = useMutation({
         mutationFn: (newsletterId: string) => fetchBlobWithToken(`/newsletters/${newsletterId}/download`, token),
-        onSuccess: (blob) => {
+        onSuccess: (blob, title) => {
             const url = URL.createObjectURL(blob);
             window.open(url, '_blank');
             toast.success("PDF opened successfully!");
         },
         onError: (err: Error) => toast.error(err.message || "Failed to download PDF."),
+    });
+
+    // NEW MUTATION: For sending the newsletter to the user's email
+    const sendToEmailMutation = useMutation({
+        mutationFn: (newsletterId: string) => fetchWithToken(
+            '/users/send-newsletter-to-self',
+            token,
+            {
+                method: 'POST',
+                body: JSON.stringify({ newsletterId })
+            }
+        ),
+        onSuccess: (data: { message: string }) => {
+            toast.success(data.message || "Newsletter sent to your email!");
+        },
+        onError: (err: Error) => {
+            toast.error(err.message || "Failed to send the newsletter.");
+        },
     });
 
     // Reset form with user's current categories when their profile data loads
@@ -181,13 +199,24 @@ const UserDashboard = () => {
                                                     Category: {newsletter.category} | Received: {format(new Date(newsletter.createdAt), 'PP')}
                                                 </p>
                                             </div>
-                                            <Button variant="outline" onClick={() => downloadPdfMutation.mutate(newsletter._id)} disabled={downloadPdfMutation.isPending && downloadPdfMutation.variables === newsletter._id}>
-                                                {downloadPdfMutation.isPending && downloadPdfMutation.variables === newsletter._id 
-                                                    ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                                    : <FileText className="w-4 h-4 mr-2" />
-                                                }
-                                                View PDF
-                                            </Button>
+                                            {/* Wrapper for the action buttons */}
+                                            <div className="flex items-center gap-2">
+                                                <Button variant="outline" onClick={() => downloadPdfMutation.mutate(newsletter._id)} disabled={downloadPdfMutation.isPending && downloadPdfMutation.variables === newsletter._id}>
+                                                    {downloadPdfMutation.isPending && downloadPdfMutation.variables === newsletter._id 
+                                                        ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                                        : <FileText className="w-4 h-4 mr-2" />
+                                                    }
+                                                    View PDF
+                                                </Button>
+                                                {/* NEW "Send to Email" button */}
+                                                <Button variant="outline" onClick={() => sendToEmailMutation.mutate(newsletter._id)} disabled={sendToEmailMutation.isPending && sendToEmailMutation.variables === newsletter._id}>
+                                                    {sendToEmailMutation.isPending && sendToEmailMutation.variables === newsletter._id
+                                                        ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                                        : <Send className="w-4 h-4 mr-2" />
+                                                    }
+                                                    Send to Email
+                                                </Button>
+                                            </div>
                                         </div>
                                     ))
                                 )}

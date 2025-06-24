@@ -34,7 +34,7 @@ interface Newsletter { _id: string; title: string; category: string; status: 'No
 interface Subscriber { _id: string; name: string; email: string; categories: string[]; }
 interface CategoryStat { name: string; subscriberCount: number; newsletterCount: number; }
 interface NewsArticle { source: { name: string; }; title: string; description: string; url: string; urlToImage: string; content: string; summary?: string; }
-interface CuratedArticle { _id: string; title: string; summary: string; sourceName: string; category: string; originalUrl: string; }
+interface CuratedArticle { _id: string; title: string; summary: string; sourceName: string; category: string; originalUrl: string; imageUrl?: string;}
 interface SystemCategory { _id: string; name: string; }
 
 // --- Zod Schema for the Add User form ---
