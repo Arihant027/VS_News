@@ -37,13 +37,11 @@ interface UserProfile {
   categories: string[];
 }
 
-// Zod schema for preferences form validation
 const preferencesSchema = z.object({
   categories: z.array(z.string()).default([]),
 });
 type PreferencesFormData = z.infer<typeof preferencesSchema>;
 
-// --- API Functions ---
 const fetchAllCategories = (token: string | null): Promise<Category[]> => fetchWithToken('/categories', token);
 const fetchUserProfile = (token: string | null): Promise<UserProfile> => fetchWithToken('/users/me', token);
 const updateUserCategories = (token: string | null, categories: string[]): Promise<UserProfile> => fetchWithToken('/users/me/categories', token, { method: 'PATCH', body: JSON.stringify({ categories }) });
@@ -54,12 +52,10 @@ const UserDashboard = () => {
 
     const [filterDate, setFilterDate] = useState<Date | undefined>(undefined);
     
-    // --- Form handling for the preferences checkboxes ---
     const { control, handleSubmit, reset, formState: { isSubmitting, isDirty } } = useForm<PreferencesFormData>({
         resolver: zodResolver(preferencesSchema),
     });
 
-    // --- Data Fetching ---
     const { data: allCategories, isLoading: isLoadingCategories, error: categoriesError } = useQuery({ 
         queryKey: ['allCategories'], 
         queryFn: () => fetchAllCategories(token), 
@@ -76,19 +72,18 @@ const UserDashboard = () => {
         enabled: !!token,
     });
 
-    // --- Mutations ---
     const updatePreferencesMutation = useMutation({
         mutationFn: (categories: string[]) => updateUserCategories(token, categories),
         onSuccess: (data) => { 
             toast.success("Preferences saved successfully!"); 
             queryClient.invalidateQueries({ queryKey: ['userProfile'] });
-            reset({ categories: data.categories || [] }); // Resets the 'dirty' state
+            reset({ categories: data.categories || [] });
         },
         onError: (err: Error) => { toast.error(err.message || "Failed to save preferences."); }
     });
     const downloadPdfMutation = useMutation({
         mutationFn: (newsletterId: string) => fetchBlobWithToken(`/newsletters/${newsletterId}/download`, token),
-        onSuccess: (blob, title) => {
+        onSuccess: (blob) => {
             const url = URL.createObjectURL(blob);
             window.open(url, '_blank');
             toast.success("PDF opened successfully!");
@@ -96,7 +91,6 @@ const UserDashboard = () => {
         onError: (err: Error) => toast.error(err.message || "Failed to download PDF."),
     });
 
-    // NEW MUTATION: For sending the newsletter to the user's email
     const sendToEmailMutation = useMutation({
         mutationFn: (newsletterId: string) => fetchWithToken(
             '/users/send-newsletter-to-self',
@@ -108,13 +102,15 @@ const UserDashboard = () => {
         ),
         onSuccess: (data: { message: string }) => {
             toast.success(data.message || "Newsletter sent to your email!");
+            queryClient.invalidateQueries({ queryKey: ['notifications'] });
+            // **FIX**: Invalidate the newsletters query to update the list on the dashboard
+            queryClient.invalidateQueries({ queryKey: ['myReceivedNewsletters'] });
         },
         onError: (err: Error) => {
             toast.error(err.message || "Failed to send the newsletter.");
         },
     });
 
-    // Reset form with user's current categories when their profile data loads
     useEffect(() => {
         if (userProfile) {
             reset({ categories: userProfile.categories || [] });
@@ -199,7 +195,6 @@ const UserDashboard = () => {
                                                     Category: {newsletter.category} | Received: {format(new Date(newsletter.createdAt), 'PP')}
                                                 </p>
                                             </div>
-                                            {/* Wrapper for the action buttons */}
                                             <div className="flex items-center gap-2">
                                                 <Button variant="outline" onClick={() => downloadPdfMutation.mutate(newsletter._id)} disabled={downloadPdfMutation.isPending && downloadPdfMutation.variables === newsletter._id}>
                                                     {downloadPdfMutation.isPending && downloadPdfMutation.variables === newsletter._id 
@@ -208,7 +203,6 @@ const UserDashboard = () => {
                                                     }
                                                     View PDF
                                                 </Button>
-                                                {/* NEW "Send to Email" button */}
                                                 <Button variant="outline" onClick={() => sendToEmailMutation.mutate(newsletter._id)} disabled={sendToEmailMutation.isPending && sendToEmailMutation.variables === newsletter._id}>
                                                     {sendToEmailMutation.isPending && sendToEmailMutation.variables === newsletter._id
                                                         ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />

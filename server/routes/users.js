@@ -1,9 +1,11 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
+import mongoose from 'mongoose'; // Ensure mongoose is imported
 import auth from '../middleware/auth.js';
 import User from '../models/user.model.js';
 import Newsletter from '../models/newsletter.model.js';
-import sgMail from '@sendgrid/mail'; // Import SendGrid mailer
+import Notification from '../models/notification.model.js';
+import sgMail from '@sendgrid/mail';
 
 const router = Router();
 
@@ -62,18 +64,24 @@ router.patch('/me/categories', auth, async (req, res) => {
 // GET user's received newsletters
 router.get('/my-newsletters', auth, async (req, res) => {
     try {
-        const receivedNewsletters = await Newsletter.find({ recipients: req.user })
+        // **FIX**: Explicitly cast the user ID string from the token to a mongoose ObjectId
+        // to ensure the database query finds the correct documents.
+        const userId = new mongoose.Types.ObjectId(req.user);
+
+        const receivedNewsletters = await Newsletter.find({ recipients: userId })
             .sort({ createdAt: -1 })
-            .select('title category createdAt');
+            .select('title category createdAt'); // _id is included by default
+
         res.json(receivedNewsletters);
     } catch (err) {
+        console.error("Error fetching user newsletters:", err); // Added logging for easier debugging
         res.status(500).json({ error: 'Server error while fetching newsletters.' });
     }
 });
 
-// --- NEW ENDPOINT TO EMAIL A NEWSLETTER TO THE LOGGED-IN USER ---
+
+// ENDPOINT TO EMAIL A NEWSLETTER TO THE LOGGED-IN USER
 router.post('/send-newsletter-to-self', auth, async (req, res) => {
-    // Check if SendGrid is configured
     if (!process.env.SENDGRID_API_KEY || !process.env.FROM_EMAIL) {
         return res.status(500).json({ message: 'Email service is not configured on the server.' });
     }
@@ -85,19 +93,16 @@ router.post('/send-newsletter-to-self', auth, async (req, res) => {
             return res.status(400).json({ message: 'Newsletter ID is required.' });
         }
 
-        // 1. Get the logged-in user's details
         const user = await User.findById(req.user).select('name email');
         if (!user) {
             return res.status(404).json({ message: 'User not found.' });
         }
 
-        // 2. Get the newsletter details
         const newsletter = await Newsletter.findById(newsletterId);
         if (!newsletter || !newsletter.pdfContent || !newsletter.pdfContent.data) {
             return res.status(404).json({ message: 'Newsletter or its PDF content not found.' });
         }
 
-        // 3. Construct and send the email
         const msg = {
             to: user.email,
             from: { name: 'NewsLetterAI', email: process.env.FROM_EMAIL },
@@ -113,16 +118,25 @@ router.post('/send-newsletter-to-self', auth, async (req, res) => {
         
         await sgMail.send(msg);
 
+        newsletter.recipients.addToSet(user._id);
+        await newsletter.save();
+        
+        const newNotification = new Notification({
+            user: user._id,
+            newsletter: newsletter._id,
+            message: `You sent the "${newsletter.title}" newsletter to your email.`,
+        });
+        await newNotification.save();
+
         res.json({ message: `Newsletter successfully sent to ${user.email}.` });
 
     } catch (err) {
         console.error('Error sending newsletter to self:', err);
-        if (err.response) { // If error is from SendGrid API
+        if (err.response) {
             console.error(err.response.body);
         }
         res.status(500).json({ message: 'Failed to send email due to a server error.' });
     }
 });
-
 
 export default router;

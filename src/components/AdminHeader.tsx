@@ -4,7 +4,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuGroup } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useAuth } from '@/context/AuthContext';
-import { Settings, Bell, LogOut, Loader2, CheckCheck } from 'lucide-react';
+import { Settings, Bell, LogOut, Loader2, CheckCheck, X } from 'lucide-react';
 import { Skeleton } from "@/components/ui/skeleton";
 import { useNavigate } from "react-router-dom";
 import { useForm } from 'react-hook-form';
@@ -17,9 +17,10 @@ import { fetchWithToken } from '@/lib/api';
 import { toast } from 'sonner';
 import { formatDistanceToNow } from 'date-fns';
 import { ModeToggle } from './mode-toggle';
-import { cn } from '@/lib/utils'; // Make sure cn is imported
+import { cn } from '@/lib/utils';
+// **FIX**: Added TooltipTrigger to the import list
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'; 
 
-// Zod schema for settings form validation
 const settingsSchema = z.object({
     name: z.string().min(2, "Name must be at least 2 characters."),
     password: z.string().min(8, "Password must be at least 8 characters.").optional().or(z.literal('')),
@@ -31,7 +32,6 @@ const settingsSchema = z.object({
 
 type SettingsFormData = z.infer<typeof settingsSchema>;
 
-// MODIFICATION: Added `isRead` to the Notification interface
 interface Notification {
     _id: string;
     message: string;
@@ -57,7 +57,6 @@ export const AdminHeader = () => {
       refetchInterval: 60000,
   });
 
-  // MODIFICATION: Calculate unread count separately for the badge.
   const unreadCount = notifications?.filter(n => !n.isRead).length ?? 0;
 
   const updateProfileMutation = useMutation({
@@ -80,6 +79,15 @@ export const AdminHeader = () => {
     mutationFn: () => fetchWithToken('/notifications/mark-as-read', token, { method: 'POST' }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['notifications'] }),
     onError: (err: Error) => toast.error(err.message || "Failed to mark notifications as read.")
+  });
+  
+  const deleteNotificationMutation = useMutation({
+    mutationFn: (notificationId: string) => fetchWithToken(`/notifications/${notificationId}`, token, { method: 'DELETE' }),
+    onSuccess: () => {
+        toast.success("Notification deleted.");
+        queryClient.invalidateQueries({ queryKey: ['notifications'] });
+    },
+    onError: (err: Error) => toast.error(err.message || "Failed to delete notification.")
   });
 
   useEffect(() => {
@@ -125,7 +133,6 @@ export const AdminHeader = () => {
                 <DropdownMenuTrigger asChild>
                     <Button variant="ghost" size="icon" className="relative">
                         <Bell className="w-5 h-5" />
-                        {/* MODIFICATION: Use unreadCount for the badge */}
                         {unreadCount > 0 && (
                             <span className="absolute top-1.5 right-1.5 flex h-3 w-3">
                                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
@@ -139,7 +146,6 @@ export const AdminHeader = () => {
                 <DropdownMenuContent align="end" className="w-80">
                     <DropdownMenuLabel className="flex justify-between items-center">
                         <span>Notifications</span>
-                        {/* MODIFICATION: Show "Mark all as read" only if there are unread items */}
                         {unreadCount > 0 && (
                             <Button variant="ghost" size="sm" className="h-auto px-2 py-1 text-xs" onClick={() => markAsReadMutation.mutate()} disabled={markAsReadMutation.isPending}>
                                 <CheckCheck className="mr-1 h-3 w-3" /> Mark all as read
@@ -150,10 +156,35 @@ export const AdminHeader = () => {
                     <DropdownMenuGroup>
                         {notifications && notifications.length > 0 ? (
                             notifications.map(n => (
-                                <DropdownMenuItem key={n._id} onSelect={(e) => e.preventDefault()} className="flex-col items-start gap-1 whitespace-normal">
-                                    {/* MODIFICATION: Apply bold font weight to unread messages */}
-                                    <p className={cn("text-sm", !n.isRead && "font-semibold")}>{n.message}</p>
-                                    <p className="text-xs text-muted-foreground">{formatDistanceToNow(new Date(n.createdAt), { addSuffix: true })}</p>
+                                <DropdownMenuItem key={n._id} onSelect={(e) => e.preventDefault()} className="flex items-center justify-between gap-2 whitespace-normal">
+                                   <div className='flex flex-col items-start'>
+                                        <p className={cn("text-sm", !n.isRead && "font-semibold")}>{n.message}</p>
+                                        <p className="text-xs text-muted-foreground">{formatDistanceToNow(new Date(n.createdAt), { addSuffix: true })}</p>
+                                   </div>
+                                   <TooltipProvider delayDuration={100}>
+                                    <Tooltip>
+                                        <TooltipTrigger asChild>
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                className="h-7 w-7 shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    deleteNotificationMutation.mutate(n._id);
+                                                }}
+                                                disabled={deleteNotificationMutation.isPending && deleteNotificationMutation.variables === n._id}
+                                            >
+                                                {deleteNotificationMutation.isPending && deleteNotificationMutation.variables === n._id 
+                                                    ? <Loader2 className="h-4 w-4 animate-spin" /> 
+                                                    : <X className="h-4 w-4" />
+                                                }
+                                            </Button>
+                                        </TooltipTrigger>
+                                        <TooltipContent>
+                                            <p>Delete Notification</p>
+                                        </TooltipContent>
+                                    </Tooltip>
+                                   </TooltipProvider>
                                 </DropdownMenuItem>
                             ))
                         ) : (
