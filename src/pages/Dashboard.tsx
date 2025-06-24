@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { FileText, Clock, CheckCircle, Users, ListTodo, Newspaper, AlertCircle, XCircle, ExternalLink, Sparkles, Loader2, Save, FileSignature, Trash2, Share2, Calendar as CalendarIcon, Plus, Copy, UserPlus, ChevronsUpDown } from 'lucide-react';
+import { FileText, Clock, CheckCircle, Users, ListTodo, Newspaper, AlertCircle, XCircle, ExternalLink, Sparkles, Loader2, Save, FileSignature, Trash2, Share2, Calendar as CalendarIcon, Plus, Copy, UserPlus, ChevronsUpDown, CheckCheck } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { AdminHeader } from '@/components/AdminHeader';
 import { useAuth } from '@/context/AuthContext';
@@ -30,7 +30,7 @@ import { z } from 'zod';
 import { cn } from '@/lib/utils';
 
 // --- Data Types ---
-interface Newsletter { _id: string; title: string; category: string; status: 'draft' | 'pending' | 'approved' | 'declined' | 'sent'; articles: { _id: string }[]; createdAt: string; }
+interface Newsletter { _id: string; title: string; category: string; status: 'Not Sent' | 'pending' | 'approved' | 'declined' | 'sent'; articles: { _id: string }[]; createdAt: string; }
 interface Subscriber { _id: string; name: string; email: string; categories: string[]; }
 interface CategoryStat { name: string; subscriberCount: number; newsletterCount: number; }
 interface NewsArticle { source: { name: string; }; title: string; description: string; url: string; urlToImage: string; content: string; summary?: string; }
@@ -61,6 +61,7 @@ const Dashboard = () => {
     const [filterDate, setFilterDate] = useState<Date | undefined>(undefined);
     const [isAddUserDialogOpen, setIsAddUserDialogOpen] = useState(false);
     const [isAddExistingUserDialogOpen, setIsAddExistingUserDialogOpen] = useState(false);
+    const [isPdfTitleDialogOpen, setIsPdfTitleDialogOpen] = useState(false);
     const [usersToAdd, setUsersToAdd] = useState<string[]>([]);
     const [createdUserInfo, setCreatedUserInfo] = useState<{ name: string; email: string; password_was: string } | null>(null);
     const [shareSearchTerm, setShareSearchTerm] = useState('');
@@ -103,7 +104,7 @@ const Dashboard = () => {
     const updateStatusMutation = useMutation({ mutationFn: ({ id, status }: { id: string; status: 'approved' | 'declined' }) => fetchWithToken(`/newsletters/${id}/status`, token, { method: 'PATCH', body: JSON.stringify({ status }) }), onSuccess: () => { toast.success("Newsletter status updated!"); queryClient.invalidateQueries({ queryKey: ['myNewsletters'] }); }, onError: (err: Error) => toast.error(err.message), });
     const summarizeMutation = useMutation({ mutationFn: (article: { content: string, url: string }) => fetchWithToken('/news/summarize', token, { method: 'POST', body: JSON.stringify({ textToSummarize: article.content ? article.content.substring(0, 3000) : '' }) }), onSuccess: (data: { summary: string }, variables) => { setSummarizedArticles(prev => ({ ...prev, [variables.url]: data.summary })); toast.success("Summary generated!"); }, onError: (err: Error) => toast.error(err.message || "Failed to generate summary."), });
     const saveMutation = useMutation({ mutationFn: (articles: NewsArticle[]) => fetchWithToken('/articles', token, { method: 'POST', body: JSON.stringify({ articles }) }), onSuccess: (data: { message: string }) => { toast.success(data.message); setSelectedRawArticles([]); queryClient.invalidateQueries({ queryKey: ['savedArticles', 'all'] }); setArticleFilter('all');}, onError: (err: Error) => toast.error(err.message), });
-    const generatePdfMutation = useMutation({ mutationFn: (data: { articles: CuratedArticle[], title: string, category: string }) => fetchBlobWithToken('/newsletters/generate-and-save', token, { method: 'POST', body: JSON.stringify(data), }), onSuccess: (blob) => { queryClient.invalidateQueries({ queryKey: ['myNewsletters'] }); setNewsletterTitle(""); const url = URL.createObjectURL(blob); window.open(url, '_blank'); toast.success("Newsletter created and opened successfully!"); }, onError: (err: Error) => { toast.error(err.message || "Failed to generate and save PDF."); }, });
+    const generatePdfMutation = useMutation({ mutationFn: (data: { articles: CuratedArticle[], title: string, category: string }) => fetchBlobWithToken('/newsletters/generate-and-save', token, { method: 'POST', body: JSON.stringify(data), }), onSuccess: (blob) => { queryClient.invalidateQueries({ queryKey: ['myNewsletters'] }); setNewsletterTitle(""); const url = URL.createObjectURL(blob); window.open(url, '_blank'); toast.success("Newsletter created and opened successfully!"); setIsPdfTitleDialogOpen(false); }, onError: (err: Error) => { toast.error(err.message || "Failed to generate and save PDF."); }, });
     const downloadPdfMutation = useMutation({ mutationFn: (newsletterId: string) => fetchBlobWithToken(`/newsletters/${newsletterId}/download`, token), onSuccess: (blob) => { const url = URL.createObjectURL(blob); window.open(url, '_blank'); toast.success("PDF opened successfully!"); }, onError: (err: Error) => { toast.error(err.message || "Failed to download PDF."); }, });
     const deleteNewsletterMutation = useMutation({ mutationFn: (newsletterId: string) => fetchWithToken(`/newsletters/${newsletterId}`, token, { method: 'DELETE' }), onSuccess: () => { toast.success("Newsletter deleted successfully!"); queryClient.invalidateQueries({ queryKey: ['myNewsletters'] }); }, onError: (err: Error) => toast.error(err.message), });
     const deleteArticleMutation = useMutation({ mutationFn: (articleId: string) => fetchWithToken(`/articles/${articleId}`, token, { method: 'DELETE' }), onSuccess: () => { toast.success("Article deleted successfully!"); setSelectedCuratedArticles([]); queryClient.invalidateQueries({ queryKey: ['savedArticles', articleFilter] }); }, onError: (err: Error) => toast.error(err.message), });
@@ -127,7 +128,16 @@ const Dashboard = () => {
     const filteredNewsletters = useMemo(() => { if (!newsletters) return []; if (!filterDate) return newsletters; const selectedDateStr = filterDate.toDateString(); return newsletters.filter(nl => new Date(nl.createdAt).toDateString() === selectedDateStr); }, [newsletters, filterDate]);
 
     // --- Render Functions ---
-    const getStatusProps = (status: string) => { switch (status) { case 'approved': return { color: 'bg-green-100 text-green-800', icon: <CheckCircle className="w-4 h-4" />, text: 'Approved' }; case 'pending': return { color: 'bg-yellow-100 text-yellow-800', icon: <Clock className="w-4 h-4" />, text: 'Pending' }; case 'declined': return { color: 'bg-red-100 text-red-800', icon: <XCircle className="w-4 h-4" />, text: 'Declined' }; default: return { color: 'bg-gray-100 text-gray-800', icon: <FileText className="w-4 h-4" />, text: 'Draft' }; } };
+    const getStatusProps = (status: string) => {
+        switch (status) {
+            case 'sent': return { color: 'bg-blue-100 text-blue-800', icon: <CheckCheck className="w-4 h-4" />, text: 'Sent' };
+            case 'approved': return { color: 'bg-green-100 text-green-800', icon: <CheckCircle className="w-4 h-4" />, text: 'Approved' };
+            case 'pending': return { color: 'bg-yellow-100 text-yellow-800', icon: <Clock className="w-4 h-4" />, text: 'Pending' };
+            case 'declined': return { color: 'bg-red-100 text-red-800', icon: <XCircle className="w-4 h-4" />, text: 'Declined' };
+            case 'Not Sent':
+            default: return { color: 'bg-gray-100 text-gray-800', icon: <FileText className="w-4 h-4" />, text: 'Not Sent' };
+        }
+    };
     const renderNewsletterList = () => { if (isLoadingNewsletters) return Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-24 w-full" />); if (newslettersError) return <Alert variant="destructive"><AlertDescription>{newslettersError.message}</AlertDescription></Alert>; if (!filteredNewsletters || filteredNewsletters.length === 0) { return <p className="text-center text-muted-foreground py-8">{filterDate ? "No newsletters found for this date." : "No newsletters have been generated yet."}</p>; } return filteredNewsletters.map((newsletter) => { const statusProps = getStatusProps(newsletter.status); return (<div key={newsletter._id} className="flex items-center justify-between p-4 border rounded-lg hover:bg-accent"><div className="flex-1"><div className="flex items-center gap-3 mb-2"><h3 className="font-semibold">{newsletter.title}</h3><Badge variant="outline">{newsletter.category}</Badge><Badge className={statusProps.color}>{statusProps.icon}<span className="ml-1">{statusProps.text}</span></Badge></div></div><div className="flex items-center gap-2 ml-4"><Button size="sm" variant="outline" onClick={() => downloadPdfMutation.mutate(newsletter._id)} disabled={downloadPdfMutation.isPending && downloadPdfMutation.variables === newsletter._id}>{downloadPdfMutation.isPending && downloadPdfMutation.variables === newsletter._id ? <Loader2 className="w-4 h-4 animate-spin"/> : 'View PDF'}</Button><Button size="icon" variant="secondary" className="h-9 w-9" onClick={() => handleOpenShareDialog(newsletter)}><Share2 className="h-4 w-4" /></Button><Button size="icon" variant="destructive" className="h-9 w-9" onClick={() => deleteNewsletterMutation.mutate(newsletter._id)} disabled={deleteNewsletterMutation.isPending && deleteNewsletterMutation.variables === newsletter._id}>{deleteNewsletterMutation.isPending && deleteNewsletterMutation.variables === newsletter._id ? <Loader2 className="h-4 h-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}</Button>{newsletter.status === 'pending' && (<><Button size="sm" variant="destructive" onClick={() => updateStatusMutation.mutate({ id: newsletter._id, status: 'declined' })} disabled={updateStatusMutation.isPending}><XCircle className="w-4 h-4 mr-1"/>Decline</Button><Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => updateStatusMutation.mutate({ id: newsletter._id, status: 'approved' })} disabled={updateStatusMutation.isPending}><CheckCircle className="w-4 h-4 mr-1"/>Approve</Button></>)}</div></div>); }); };
     const renderNewsArticleList = () => { if (isLoadingNews) return Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-40 w-full rounded-lg" />); if (newsError) return <Alert variant="destructive"><AlertDescription>{newsError.message}</AlertDescription></Alert>; if (!newsData || newsData.articles.length === 0) return <div className="text-center py-10"><p className="text-muted-foreground">No recent news articles found.</p></div>; return newsData.articles.map((article) => (<Card key={article.url} className="overflow-hidden"><div className="p-6 flex flex-col justify-between flex-1"><div><Badge variant="secondary" className="mb-2">{article.source.name}</Badge><CardTitle className="text-lg mb-2">{article.title}</CardTitle><CardDescription>{article.description}</CardDescription>{summarizedArticles[article.url] && (<div className='mt-4'><Label className='text-xs font-semibold text-primary'>AI Summary</Label><Textarea readOnly value={summarizedArticles[article.url]} className="mt-1 bg-primary/10" rows={5} /></div>)}</div><div className='flex items-center justify-between mt-4'><div className="flex items-center gap-2"><Button variant="outline" size="sm" asChild><a href={article.url} target="_blank" rel="noopener noreferrer">Read More <ExternalLink className="w-3 h-3 ml-2"/></a></Button><Button variant="secondary" size="sm" onClick={() => summarizeMutation.mutate({ content: article.content, url: article.url })} disabled={summarizeMutation.isPending}>{summarizeMutation.isPending && summarizeMutation.variables?.url === article.url ? <Loader2 className="w-4 h-4 animate-spin"/> : <Sparkles className="w-4 h-4" />}<span className='ml-2'>Summarize</span></Button></div><div className="flex items-center space-x-2"><Checkbox id={article.url} checked={selectedRawArticles.some(sa => sa.url === article.url)} onCheckedChange={(checked) => handleSelectRawArticle(article, Boolean(checked))}/><label htmlFor={article.url} className="text-sm font-medium">Select</label></div></div></div></Card>)); };
     const renderMyCategories = () => { if (isLoadingCategoryStats) return Array.from({ length: 2 }).map((_, i) => <Card key={i}><CardHeader><Skeleton className="h-6 w-1/2" /></CardHeader><CardContent><Skeleton className="h-10 w-full" /></CardContent></Card>); if (categoryStatsError) return <Alert variant="destructive" className="col-span-full"><AlertDescription>{categoryStatsError.message}</AlertDescription></Alert>; if (!categoryStats || categoryStats.length === 0) return <p className="text-muted-foreground col-span-full text-center py-8">You are not assigned to any categories.</p>; return categoryStats.map((cat) => (<Card key={cat.name} className="hover:shadow-lg transition-shadow"><CardHeader><CardTitle className="text-primary">{cat.name}</CardTitle><CardDescription>Live statistics</CardDescription></CardHeader><CardContent><div className="space-y-3"><div className="flex justify-between items-center text-sm"><span className="flex items-center text-muted-foreground"><Users className="w-4 h-4 mr-2"/>Subscribers</span><span className="font-bold text-lg">{cat.subscriberCount}</span></div><div className="flex justify-between items-center text-sm"><span className="flex items-center text-muted-foreground"><Newspaper className="w-4 h-4 mr-2"/>Newsletters</span><span className="font-bold text-lg">{cat.newsletterCount}</span></div></div></CardContent></Card>)); };
@@ -145,7 +155,32 @@ const Dashboard = () => {
             </div>
             <Tabs defaultValue="create-newsletter" className="w-full">
                 <div className="flex justify-center"><TabsList><TabsTrigger value="create-newsletter">Create Newsletter</TabsTrigger><TabsTrigger value="generated-newsletters">Newsletters History</TabsTrigger><TabsTrigger value="categories">My Categories</TabsTrigger><TabsTrigger value="users">Users</TabsTrigger></TabsList></div>
-                <TabsContent value="create-newsletter" className="mt-6"><Card><CardHeader><div className="flex justify-between items-center"><div><CardTitle>Create a Newsletter</CardTitle><CardDescription>Enter a title, select articles, and generate the PDF.</CardDescription></div><div className="flex items-center gap-2"><Select value={articleFilter} onValueChange={setArticleFilter}><SelectTrigger className="w-[180px]"><SelectValue placeholder="Filter by date" /></SelectTrigger><SelectContent><SelectItem value="all">All Time</SelectItem><SelectItem value="day">Past 24 hours</SelectItem><SelectItem value="week">Past Week</SelectItem><SelectItem value="month">Past Month</SelectItem></SelectContent></Select><Button variant="outline" onClick={() => setIsCurationDialogOpen(true)}><Newspaper className='w-4 h-4 mr-2'/>Curate News & Articles</Button><Button onClick={handleGeneratePdf} disabled={selectedCuratedArticles.length === 0 || generatePdfMutation.isPending}>{generatePdfMutation.isPending ? (<><Loader2 className='w-4 h-4 mr-2 animate-spin'/>Saving...</>) : (<><FileSignature className='w-4 h-4 mr-2'/>Generate PDF</>)}</Button></div></div><div className="mt-4"><Label htmlFor="newsletter-title">Newsletter Title</Label><Input id="newsletter-title" placeholder="e.g., Weekly Tech Roundup" value={newsletterTitle} onChange={(e) => setNewsletterTitle(e.target.value)} /></div></CardHeader><CardContent className="space-y-2">{renderNewsletterCreator()}</CardContent></Card></TabsContent>
+                <TabsContent value="create-newsletter" className="mt-6">
+                    <Card>
+                        <CardHeader>
+                            <div className="flex justify-between items-center">
+                                <div>
+                                    <CardTitle>Create a Newsletter</CardTitle>
+                                    <CardDescription>Select articles below, then click 'Generate PDF' to give your newsletter a title and create it.</CardDescription>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <Select value={articleFilter} onValueChange={setArticleFilter}>
+                                        <SelectTrigger className="w-[180px]"><SelectValue placeholder="Filter by date" /></SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="all">All Time</SelectItem>
+                                            <SelectItem value="day">Past 24 hours</SelectItem>
+                                            <SelectItem value="week">Past Week</SelectItem>
+                                            <SelectItem value="month">Past Month</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                    <Button variant="outline" onClick={() => setIsCurationDialogOpen(true)}><Newspaper className='w-4 h-4 mr-2'/>Curate News & Articles</Button>
+                                    <Button onClick={() => setIsPdfTitleDialogOpen(true)} disabled={selectedCuratedArticles.length === 0}><FileSignature className='w-4 h-4 mr-2'/>Generate PDF</Button>
+                                </div>
+                            </div>
+                        </CardHeader>
+                        <CardContent className="space-y-2">{renderNewsletterCreator()}</CardContent>
+                    </Card>
+                </TabsContent>
                 <TabsContent value="generated-newsletters" className="mt-6"><Card><CardHeader><div className='flex items-center justify-between'><div><CardTitle>Generated Newsletters</CardTitle><CardDescription>View, approve, or decline previously generated newsletters.</CardDescription></div><Popover><PopoverTrigger asChild><Button id="date" variant={"outline"} className={cn("w-[240px] justify-start text-left font-normal",!filterDate && "text-muted-foreground")}><CalendarIcon className="mr-2 h-4 w-4" />{filterDate ? format(filterDate, "PPP") : <span>Filter by date</span>}</Button></PopoverTrigger><PopoverContent className="w-auto p-0" align="end"><Calendar initialFocus mode="single" selected={filterDate} onSelect={setFilterDate} /></PopoverContent></Popover></div></CardHeader><CardContent className="space-y-4">{renderNewsletterList()}</CardContent></Card></TabsContent>
                 <TabsContent value="categories" className="mt-6"><div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">{renderMyCategories()}</div></TabsContent>
                 <TabsContent value="users" className="mt-6"><Card><CardHeader><div className='flex items-center justify-between'><div><CardTitle className="flex items-center gap-2"><Users className='w-5 h-5' /> Subscribed Users</CardTitle><CardDescription>Users subscribed to your assigned categories.</CardDescription></div>
@@ -199,6 +234,36 @@ const Dashboard = () => {
                     <Button type="submit" onClick={handleAddExistingUsersSubmit} disabled={usersToAdd.length === 0 || addUsersToCategoryMutation.isPending}>
                         {addUsersToCategoryMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                         Add {usersToAdd.length > 0 ? usersToAdd.length : ''} User(s)
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+        {/* --- DIALOG FOR PDF TITLE --- */}
+        <Dialog open={isPdfTitleDialogOpen} onOpenChange={setIsPdfTitleDialogOpen}>
+            <DialogContent>
+                <DialogHeader>
+                    <DialogTitle>Set Newsletter Title</DialogTitle>
+                    <DialogDescription>
+                        Please enter a title for your new newsletter before generating.
+                    </DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                    <Label htmlFor="newsletter-title-input" className="text-left">
+                        Title
+                    </Label>
+                    <Input
+                        id="newsletter-title-input"
+                        value={newsletterTitle}
+                        onChange={(e) => setNewsletterTitle(e.target.value)}
+                        placeholder="e.g., Weekly Tech Roundup"
+                        className="col-span-3"
+                    />
+                </div>
+                <DialogFooter>
+                    <Button variant="outline" onClick={() => setIsPdfTitleDialogOpen(false)}>Cancel</Button>
+                    <Button onClick={handleGeneratePdf} disabled={!newsletterTitle || generatePdfMutation.isPending}>
+                        {generatePdfMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileSignature className="mr-2 h-4 w-4" />}
+                        Generate PDF
                     </Button>
                 </DialogFooter>
             </DialogContent>

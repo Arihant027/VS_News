@@ -106,7 +106,8 @@ router.post('/generate-and-save', auth, async (req, res) => {
             title,
             category,
             articles: articles.map(a => a._id),
-            status: 'draft',
+            // MODIFIED: Changed 'draft' to 'Not Sent'
+            status: 'Not Sent',
             pdfContent: {
                 data: Buffer.from(pdfBuffer),
                 contentType: 'application/pdf'

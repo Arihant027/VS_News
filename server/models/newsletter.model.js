@@ -6,11 +6,12 @@ const newsletterSchema = new Schema({
   category: { type: String, required: true },
   status: { 
     type: String, 
-    enum: ['draft', 'pending', 'approved', 'sent', 'declined'], 
-    default: 'draft' 
+    // MODIFIED: Replaced 'draft' with 'Not Sent' in the list of valid statuses
+    enum: ['Not Sent', 'pending', 'approved', 'sent', 'declined'], 
+    // MODIFIED: Changed the default status for new newsletters
+    default: 'Not Sent' 
   },
   articles: [{ type: Schema.Types.ObjectId, ref: 'CuratedArticle' }],
-  // --- ADD THE FIELD BELOW ---
   recipients: [{ type: Schema.Types.ObjectId, ref: 'User' }],
   pdfContent: {
     data: Buffer,
