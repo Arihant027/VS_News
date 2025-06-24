@@ -3,57 +3,60 @@ import User from '../models/user.model.js';
 import auth from '../middleware/auth.js';
 import axios from 'axios';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { format, subDays } from 'date-fns';
 
 const router = Router();
 
 const genAI = process.env.GEMINI_API_KEY ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY) : null;
 
+// A map to create more specific, relevant search queries for NewsAPI.org
 const keywordMap = {
-    'java': '(Java AND (programming OR software OR developer OR oracle OR Jakarta)) NOT island NOT coffee',
+    'java': '(Java AND (programming updates OR software updates OR oracle Java updates)) NOT island NOT coffee',
     '.net': '(".NET" OR "ASP.NET" OR C#) AND (microsoft OR software OR framework OR developer)',
-    'data science': '"Data Science" OR "Machine Learning" OR "Artificial Intelligence" OR Pandas OR NumPy',
+    'data science': '"Machine Learning" OR "Artificial Intelligence" OR Pandas OR NumPy',
     'devops': 'DevOps OR CI/CD OR Jenkins OR Docker OR Kubernetes OR Terraform',
     'ci / cd pipelines': '"CI/CD" OR "Continuous Integration" OR "Continuous Deployment" OR Jenkins OR GitLab',
+    // You can add more specific queries for your other categories here
 };
 
-// GET /api/news - Fetch relevant news from GNews API
+// GET /api/news - Fetch relevant news from NewsAPI.org
 router.get('/', auth, async (req, res) => {
     try {
         const admin = await User.findById(req.user);
         if (!admin || !admin.categories || admin.categories.length === 0) {
             return res.json({ articles: [] });
         }
+        
+        // Map the admin's categories to the more specific queries from the keywordMap.
+        // If a category is not in the map, it will be wrapped in quotes for an exact match.
         const specificQueries = admin.categories.map(cat => keywordMap[cat.toLowerCase()] || `"${cat}"`);
+        
+        // Join the specific queries with 'OR' to search for any of them.
         const query = specificQueries.join(' OR ');
 
-        // Note: GNews free tier focuses on recent news (approx. last 24 hours) and does not support the 'from' date parameter.
-        const gnewsApiResponse = await axios.get('https://gnews.io/api/v4/search', {
+        const fromDate = format(subDays(new Date(), 7), 'yyyy-MM-dd');
+
+        const newsApiResponse = await axios.get('https://newsapi.org/v2/everything', {
             params: {
                 q: query,
-                lang: 'en',
-                country: 'us',
-                max: 10,
-                in: 'title,description',
-                apikey: process.env.GNEWS_API_KEY,
+                from: fromDate,
+                sortBy: 'relevancy', // Sorting by relevancy for better results with specific queries
+                language: 'en',
+                apiKey: process.env.NEWS_API_KEY,
             }
         });
-        
-        const transformedArticles = gnewsApiResponse.data.articles.map(article => ({
-            source: { name: article.source.name },
-            author: article.author,
-            title: article.title,
-            description: article.description,
-            url: article.url,
-            urlToImage: article.image,
-            publishedAt: article.publishedAt,
-            content: article.content,
-        }));
-        
-        res.json({ articles: transformedArticles });
+
+        res.json({ articles: newsApiResponse.data.articles });
+
     } catch (err) {
-        res.status(500).json({ message: 'Failed to fetch news from GNews API.', error: err.message });
+        if (err.response) {
+            console.error('NewsAPI Error:', err.response.data);
+            return res.status(500).json({ message: `Failed to fetch news: ${err.response.data.message}` });
+        }
+        res.status(500).json({ message: 'Failed to fetch news from NewsAPI.org.', error: err.message });
     }
 });
+
 
 // POST /api/news/summarize - Summarize article text using Gemini
 router.post('/summarize', auth, async (req, res) => {
@@ -66,9 +69,8 @@ router.post('/summarize', auth, async (req, res) => {
 
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
         
-        // --- NEW, MORE DIRECT AND EFFECTIVE PROMPT ---
         const prompt = `
-            Generate a professional, newsletter-style summary of the following news article.
+            Generate a professional, newsletter-style summary of the following text.
 
             The summary must be:
             - Approximately 2-3 paragraphs long.
@@ -77,7 +79,7 @@ router.post('/summarize', auth, async (req, res) => {
             - The tone should be objective and clear.
             - Do not start with conversational phrases.
 
-            ARTICLE:
+            TEXT:
             """
             ${textToSummarize}
             """
