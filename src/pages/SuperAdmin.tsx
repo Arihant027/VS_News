@@ -1,4 +1,3 @@
-// src/pages/SuperAdmin.tsx
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/context/AuthContext';
@@ -130,7 +129,7 @@ const SuperAdmin = () => {
     return admins.map((admin) => (
       <div key={admin._id} className="flex items-center justify-between p-4 border rounded-lg hover:bg-accent transition-colors">
         <div><h3 className="font-semibold">{admin.name} <span className="text-sm font-normal text-muted-foreground">({admin.email})</span></h3><div className="flex items-center gap-2 mt-1"><Badge variant={admin.status === 'Active' ? 'default' : 'secondary'}>{admin.status}</Badge><Badge variant="outline">{admin.userType}</Badge></div></div>
-        <div className="flex items-center gap-2 ml-4"><Button variant="outline" size="sm" onClick={() => handleOpenAdminDialog(admin)}><Edit className="w-4 h-4 mr-1" />Edit</Button><Button variant="outline" size="sm" className="text-red-600" onClick={() => removeAdminMutation(admin._id)} disabled={isRemovingAdmin || admin.userType === 'superadmin'}><Trash2 className="w-4 h-4 mr-1" />Remove</Button></div>
+        <div className="flex items-center gap-2 ml-4"><Button variant="outline" size="sm" onClick={() => handleOpenAdminDialog(admin)}><Edit className="w-4 h-4 mr-1" />Edit</Button><AlertDialog><AlertDialogTrigger asChild><Button variant="outline" size="sm" className="text-red-600" disabled={isRemovingAdmin || admin.userType === 'superadmin'}><Trash2 className="w-4 h-4 mr-1" />Remove</Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle><AlertDialogDescription>This will permanently remove <span className="font-semibold">{admin.name}</span> as an admin. They will lose all admin privileges.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => removeAdminMutation(admin._id)} disabled={isRemovingAdmin}>{isRemovingAdmin ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : "Confirm"}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></div>
       </div>
     ));
   };
@@ -146,18 +145,59 @@ const SuperAdmin = () => {
   };
 
   const renderAssignmentsByCategory = () => {
-    if (isLoadingCategories || isLoadingAdmins) return Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-36 w-full" />);
-    if (categoriesError) return <Alert variant="destructive" className="col-span-full"><AlertDescription>{categoriesError.message}</AlertDescription></Alert>;
-    if (!categories || categories.length === 0) return <p className="text-muted-foreground col-span-full text-center py-8">No categories have been created yet.</p>;
+    // **FIX**: Combined loading and error checks for robustness
+    if (isLoadingCategories || isLoadingAdmins) {
+      return Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-36 w-full" />);
+    }
+    if (categoriesError) {
+      return <Alert variant="destructive" className="col-span-full"><AlertDescription>{`Failed to load categories: ${categoriesError.message}`}</AlertDescription></Alert>;
+    }
+     if (adminsError) {
+      return <Alert variant="destructive" className="col-span-full"><AlertDescription>{`Failed to load admins: ${adminsError.message}`}</AlertDescription></Alert>;
+    }
+    if (!categories || categories.length === 0) {
+      return <p className="text-muted-foreground col-span-full text-center py-8">No categories have been created yet.</p>;
+    }
+
     return categories.map((category) => {
         const assignedAdmins = admins?.filter(admin => category.admins.includes(admin._id)) || [];
         return (
             <Card key={category._id} className="transition-shadow hover:shadow-md flex flex-col">
                 <CardHeader className="flex flex-row items-start justify-between">
                     <CardTitle>{category.name}</CardTitle>
-                    <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground shrink-0 hover:bg-red-50 hover:text-red-600" onClick={() => removeCategoryMutation(category._id)} disabled={isRemovingCategory}><Trash2 className="h-4 w-4" /></Button>
+                    {/* **FIX**: Added confirmation dialog before deleting a category */}
+                    <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                             <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground shrink-0 hover:bg-red-50 hover:text-red-600" disabled={isRemovingCategory}>
+                                 <Trash2 className="h-4 w-4" />
+                             </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                            <AlertDialogHeader>
+                                <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                    This will permanently delete the <span className="font-semibold">{category.name}</span> category. All admin assignments for this category will be removed. This action cannot be undone.
+                                </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                <AlertDialogAction onClick={() => removeCategoryMutation(category._id)} disabled={isRemovingCategory}>
+                                    {isRemovingCategory ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : "Delete Category"}
+                                </AlertDialogAction>
+                            </AlertDialogFooter>
+                        </AlertDialogContent>
+                    </AlertDialog>
                 </CardHeader>
-                <CardContent className="flex-grow pt-0"><Label className="text-xs text-muted-foreground">Managed By</Label><div className="mt-2 flex flex-col gap-1 items-start">{assignedAdmins.length > 0 ? (assignedAdmins.map(admin => (<Badge key={admin._id} variant="outline">{admin.name}</Badge>))) : (<p className="text-sm text-muted-foreground">No admin assigned</p>)}</div></CardContent>
+                <CardContent className="flex-grow pt-0">
+                  <Label className="text-xs text-muted-foreground">Managed By</Label>
+                  <div className="mt-2 flex flex-col gap-1 items-start">
+                    {assignedAdmins.length > 0 ? (
+                      assignedAdmins.map(admin => (<Badge key={admin._id} variant="outline">{admin.name}</Badge>))
+                    ) : (
+                      <p className="text-sm text-muted-foreground">No admin assigned</p>
+                    )}
+                  </div>
+                </CardContent>
             </Card>
         );
     });
@@ -188,7 +228,7 @@ const SuperAdmin = () => {
       <div className="min-h-screen bg-background">
         <AdminHeader />
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-            <Tabs defaultValue="all-users" className="w-full">
+            <Tabs defaultValue="categories" className="w-full">
                 <div className='flex justify-center'><TabsList><TabsTrigger value="admins">Admin Management</TabsTrigger><TabsTrigger value="categories">Category Assignment</TabsTrigger><TabsTrigger value="all-users">All Users</TabsTrigger></TabsList></div>
                 
                 <TabsContent value="admins" className="space-y-6 mt-6">
