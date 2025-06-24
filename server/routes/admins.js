@@ -124,6 +124,44 @@ router.patch('/remove-user-from-category', auth, async (req, res) => {
     }
 });
 
+// START: NEW ROUTE TO ADD EXISTING USERS TO A CATEGORY
+router.patch('/add-users-to-category', auth, async (req, res) => {
+    try {
+        const { userIds } = req.body;
+        if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
+            return res.status(400).json({ message: 'An array of user IDs is required.' });
+        }
+        
+        const admin = await User.findById(req.user);
+        // Assumes an admin manages one primary category, based on existing app logic
+        const adminCategory = admin.categories[0]; 
+        if (!adminCategory) {
+            return res.status(400).json({ message: 'Admin is not assigned to any category.' });
+        }
+
+        // Use $addToSet to add the category to the users' categories array.
+        // This prevents adding duplicate categories if a user is already subscribed.
+        const result = await User.updateMany(
+            { _id: { $in: userIds } },
+            { $addToSet: { categories: adminCategory } }
+        );
+
+        if (result.modifiedCount === 0 && result.matchedCount > 0) {
+             return res.json({ message: `Selected users were already in the ${adminCategory} category. No changes made.` });
+        }
+        
+        if (result.modifiedCount === 0) {
+            return res.status(404).json({ message: 'None of the selected users could be found.' });
+        }
+
+        res.json({ message: `${result.modifiedCount} user(s) successfully added to the ${adminCategory} category.` });
+        
+    } catch (err) {
+        res.status(500).json({ message: 'Server error while adding users to category.', error: err.message });
+    }
+});
+// END: NEW ROUTE
+
 // POST - Add a new admin (by superadmin)
 router.post('/', auth, async (req, res) => {
   try {

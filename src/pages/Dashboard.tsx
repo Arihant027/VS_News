@@ -14,7 +14,8 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { FileText, Clock, CheckCircle, Users, ListTodo, Newspaper, AlertCircle, XCircle, ExternalLink, Sparkles, Loader2, Save, FileSignature, Trash2, Share2, Calendar as CalendarIcon, Plus, Copy, UserPlus } from 'lucide-react';
+import { FileText, Clock, CheckCircle, Users, ListTodo, Newspaper, AlertCircle, XCircle, ExternalLink, Sparkles, Loader2, Save, FileSignature, Trash2, Share2, Calendar as CalendarIcon, Plus, Copy, UserPlus, ChevronsUpDown } from 'lucide-react';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { AdminHeader } from '@/components/AdminHeader';
 import { useAuth } from '@/context/AuthContext';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -36,7 +37,6 @@ interface NewsArticle { source: { name: string; }; title: string; description: s
 interface CuratedArticle { _id: string; title: string; summary: string; sourceName: string; category: string; originalUrl: string; }
 interface SystemCategory { _id: string; name: string; }
 
-
 // --- Zod Schema for the Add User form ---
 const addUserSchema = z.object({
   name: z.string().min(2, "Name is required."),
@@ -48,18 +48,20 @@ type AddUserFormData = z.infer<typeof addUserSchema>;
 const Dashboard = () => {
     const queryClient = useQueryClient();
     const { token } = useAuth();
+    
+    // --- State Management ---
     const [summarizedArticles, setSummarizedArticles] = useState<Record<string, string>>({});
     const [selectedRawArticles, setSelectedRawArticles] = useState<NewsArticle[]>([]);
     const [selectedCuratedArticles, setSelectedCuratedArticles] = useState<CuratedArticle[]>([]);
     const [newsletterTitle, setNewsletterTitle] = useState("");
-    
-    // --- State Management ---
     const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
     const [sharingNewsletter, setSharingNewsletter] = useState<Newsletter | null>(null);
     const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
     const [isCurationDialogOpen, setIsCurationDialogOpen] = useState(false);
     const [filterDate, setFilterDate] = useState<Date | undefined>(undefined);
     const [isAddUserDialogOpen, setIsAddUserDialogOpen] = useState(false);
+    const [isAddExistingUserDialogOpen, setIsAddExistingUserDialogOpen] = useState(false);
+    const [usersToAdd, setUsersToAdd] = useState<string[]>([]);
     const [createdUserInfo, setCreatedUserInfo] = useState<{ name: string; email: string; password_was: string } | null>(null);
     const [shareSearchTerm, setShareSearchTerm] = useState('');
     const [articleFilter, setArticleFilter] = useState('all');
@@ -71,7 +73,7 @@ const Dashboard = () => {
     const { data: subscribers, isLoading: isLoadingSubscribers, error: subscribersError } = useQuery<Subscriber[], Error>({ queryKey: ['mySubscribers'], queryFn: () => fetchWithToken('/admins/my-subscribers', token), enabled: !!token });
     const { data: categoryStats, isLoading: isLoadingCategoryStats, error: categoryStatsError } = useQuery<CategoryStat[], Error>({ queryKey: ['myCategoryStats'], queryFn: () => fetchWithToken('/admins/my-categories-stats', token), enabled: !!token });
     const { data: newsData, isLoading: isLoadingNews, error: newsError } = useQuery<{ articles: NewsArticle[] }, Error>({ queryKey: ['newsArticles'], queryFn: () => fetchWithToken('/news', token), enabled: !!token });
-    const { data: allUsers, isLoading: isLoadingAllUsers, error: allUsersErrorHook } = useQuery<Subscriber[], Error>({ queryKey: ['allUsers'], queryFn: () => fetchWithToken('/admins/all-users', token), enabled: isShareDialogOpen });
+    const { data: allUsers, isLoading: isLoadingAllUsers } = useQuery<Subscriber[], Error>({ queryKey: ['allUsers'], queryFn: () => fetchWithToken('/admins/all-users', token), enabled: !!token && (isShareDialogOpen || isAddExistingUserDialogOpen) });
     const { data: savedArticles, isLoading: isLoadingSaved, error: savedArticlesError } = useQuery<CuratedArticle[], Error>({ queryKey: ['savedArticles', articleFilter], queryFn: () => { const endpoint = articleFilter === 'all' ? '/articles' : `/articles?timeframe=${articleFilter}`; return fetchWithToken(endpoint, token); }, enabled: !!token });
     const { data: allSystemCategories, isLoading: isLoadingAllCategories, error: allCategoriesError } = useQuery<SystemCategory[], Error>({ queryKey: ['allSystemCategories'], queryFn: () => fetchWithToken('/categories', token), enabled: isShareDialogOpen });
 
@@ -88,6 +90,15 @@ const Dashboard = () => {
       },
       onError: (err: Error) => toast.error(err.message),
     });
+    const addUsersToCategoryMutation = useMutation({
+      mutationFn: (userIds: string[]) => fetchWithToken('/admins/add-users-to-category', token, { method: 'PATCH', body: JSON.stringify({ userIds }) }),
+      onSuccess: (data) => {
+        toast.success(data.message);
+        queryClient.invalidateQueries({ queryKey: ['mySubscribers', 'myCategoryStats'] });
+        setIsAddExistingUserDialogOpen(false);
+      },
+      onError: (err: Error) => toast.error(err.message),
+    });
     const removeUserFromCategoryMutation = useMutation({ mutationFn: (userId: string) => fetchWithToken('/admins/remove-user-from-category', token, { method: 'PATCH', body: JSON.stringify({ userId }) }), onSuccess: (data) => { toast.success(data.message); queryClient.invalidateQueries({ queryKey: ['mySubscribers', 'myCategoryStats'] }); }, onError: (err: Error) => toast.error(err.message), });
     const updateStatusMutation = useMutation({ mutationFn: ({ id, status }: { id: string; status: 'approved' | 'declined' }) => fetchWithToken(`/newsletters/${id}/status`, token, { method: 'PATCH', body: JSON.stringify({ status }) }), onSuccess: () => { toast.success("Newsletter status updated!"); queryClient.invalidateQueries({ queryKey: ['myNewsletters'] }); }, onError: (err: Error) => toast.error(err.message), });
     const summarizeMutation = useMutation({ mutationFn: (article: { content: string, url: string }) => fetchWithToken('/news/summarize', token, { method: 'POST', body: JSON.stringify({ textToSummarize: article.content ? article.content.substring(0, 3000) : '' }) }), onSuccess: (data: { summary: string }, variables) => { setSummarizedArticles(prev => ({ ...prev, [variables.url]: data.summary })); toast.success("Summary generated!"); }, onError: (err: Error) => toast.error(err.message || "Failed to generate summary."), });
@@ -100,31 +111,18 @@ const Dashboard = () => {
 
     // --- Event Handlers & Memoized Values ---
     const handleOpenShareDialog = (newsletter: Newsletter) => { setSelectedUserIds([]); setShareSearchTerm(''); setSharingNewsletter(newsletter); setIsShareDialogOpen(true); };
-    const handleCategorySelection = (categoryUsers: Subscriber[], isChecked: boolean) => {
-        const idsForCategory = categoryUsers.map(u => u._id);
-        const currentSelectedIds = new Set(selectedUserIds);
-        if (isChecked) { idsForCategory.forEach(id => currentSelectedIds.add(id)); } 
-        else { idsForCategory.forEach(id => currentSelectedIds.delete(id)); }
-        setSelectedUserIds(Array.from(currentSelectedIds));
-    };
+    const handleOpenAddExistingDialog = () => { setUsersToAdd([]); setIsAddExistingUserDialogOpen(true); };
+    const handleCategorySelection = (categoryUsers: Subscriber[], isChecked: boolean) => { const idsForCategory = categoryUsers.map(u => u._id); const currentSelectedIds = new Set(selectedUserIds); if (isChecked) { idsForCategory.forEach(id => currentSelectedIds.add(id)); } else { idsForCategory.forEach(id => currentSelectedIds.delete(id)); } setSelectedUserIds(Array.from(currentSelectedIds)); };
     const handleSelectAllFiltered = (isSelected: boolean) => { const filteredIds = filteredAllUsers.map(u => u._id); if (isSelected) { setSelectedUserIds(prev => [...new Set([...prev, ...filteredIds])]); } else { setSelectedUserIds(prev => prev.filter(id => !filteredIds.includes(id))); } };
     const handleShareSubmit = () => { if (!sharingNewsletter || selectedUserIds.length === 0) { toast.warning("Please select at least one recipient."); return; } shareNewsletterMutation.mutate({ newsletterId: sharingNewsletter._id, userIds: Array.from(new Set(selectedUserIds)) }); };
     const handleSelectRawArticle = (article: NewsArticle, isSelected: boolean) => { setSelectedRawArticles(prev => isSelected ? [...prev, article] : prev.filter(a => a.url !== article.url)); };
     const handleSave = () => { const articlesToSave = selectedRawArticles.map(a => ({ ...a, summary: summarizedArticles[a.url] || a.description })); saveMutation.mutate(articlesToSave); };
     const handleSelectCuratedArticle = (article: CuratedArticle, isSelected: boolean) => { setSelectedCuratedArticles(prev => isSelected ? [...prev, article] : prev.filter(a => a._id !== article._id)); };
     const handleGeneratePdf = () => { if (!newsletterTitle) { toast.warning("Please enter a title."); return; } if (selectedCuratedArticles.length === 0) { toast.warning("Please select at least one article."); return; } const category = selectedCuratedArticles[0]?.category; if (!category) { toast.error("Could not determine category."); return; } generatePdfMutation.mutate({ articles: selectedCuratedArticles, title: newsletterTitle, category }); };
+    const handleAddExistingUsersSubmit = () => { if (usersToAdd.length === 0) { toast.warning("Please select at least one user to add."); return; } addUsersToCategoryMutation.mutate(usersToAdd); };
     
-    const groupedUsersByCategory = useMemo(() => {
-        if (!allUsers) return {};
-        return allUsers.reduce((acc, user) => {
-            user.categories.forEach(category => {
-                if (!acc[category]) { acc[category] = []; }
-                acc[category].push(user);
-            });
-            return acc;
-        }, {} as Record<string, Subscriber[]>);
-    }, [allUsers]);
-
+    const assignableUsers = useMemo(() => { if (!allUsers) return []; if (!subscribers) return allUsers; const subscribedIds = new Set(subscribers.map(s => s._id)); return allUsers.filter(u => !subscribedIds.has(u._id)); }, [allUsers, subscribers]);
+    const groupedUsersByCategory = useMemo(() => { if (!allUsers) return {}; return allUsers.reduce((acc, user) => { user.categories.forEach(category => { if (!acc[category]) { acc[category] = []; } acc[category].push(user); }); return acc; }, {} as Record<string, Subscriber[]>); }, [allUsers]);
     const filteredAllUsers = useMemo(() => { if (!allUsers) return []; if (!shareSearchTerm) return allUsers; return allUsers.filter(user => user.name.toLowerCase().includes(shareSearchTerm.toLowerCase()) || user.email.toLowerCase().includes(shareSearchTerm.toLowerCase())); }, [allUsers, shareSearchTerm]);
     const filteredNewsletters = useMemo(() => { if (!newsletters) return []; if (!filterDate) return newsletters; const selectedDateStr = filterDate.toDateString(); return newsletters.filter(nl => new Date(nl.createdAt).toDateString() === selectedDateStr); }, [newsletters, filterDate]);
 
@@ -150,58 +148,61 @@ const Dashboard = () => {
                 <TabsContent value="create-newsletter" className="mt-6"><Card><CardHeader><div className="flex justify-between items-center"><div><CardTitle>Create a Newsletter</CardTitle><CardDescription>Enter a title, select articles, and generate the PDF.</CardDescription></div><div className="flex items-center gap-2"><Select value={articleFilter} onValueChange={setArticleFilter}><SelectTrigger className="w-[180px]"><SelectValue placeholder="Filter by date" /></SelectTrigger><SelectContent><SelectItem value="all">All Time</SelectItem><SelectItem value="day">Past 24 hours</SelectItem><SelectItem value="week">Past Week</SelectItem><SelectItem value="month">Past Month</SelectItem></SelectContent></Select><Button variant="outline" onClick={() => setIsCurationDialogOpen(true)}><Newspaper className='w-4 h-4 mr-2'/>Curate News & Articles</Button><Button onClick={handleGeneratePdf} disabled={selectedCuratedArticles.length === 0 || generatePdfMutation.isPending}>{generatePdfMutation.isPending ? (<><Loader2 className='w-4 h-4 mr-2 animate-spin'/>Saving...</>) : (<><FileSignature className='w-4 h-4 mr-2'/>Generate PDF</>)}</Button></div></div><div className="mt-4"><Label htmlFor="newsletter-title">Newsletter Title</Label><Input id="newsletter-title" placeholder="e.g., Weekly Tech Roundup" value={newsletterTitle} onChange={(e) => setNewsletterTitle(e.target.value)} /></div></CardHeader><CardContent className="space-y-2">{renderNewsletterCreator()}</CardContent></Card></TabsContent>
                 <TabsContent value="generated-newsletters" className="mt-6"><Card><CardHeader><div className='flex items-center justify-between'><div><CardTitle>Generated Newsletters</CardTitle><CardDescription>View, approve, or decline previously generated newsletters.</CardDescription></div><Popover><PopoverTrigger asChild><Button id="date" variant={"outline"} className={cn("w-[240px] justify-start text-left font-normal",!filterDate && "text-muted-foreground")}><CalendarIcon className="mr-2 h-4 w-4" />{filterDate ? format(filterDate, "PPP") : <span>Filter by date</span>}</Button></PopoverTrigger><PopoverContent className="w-auto p-0" align="end"><Calendar initialFocus mode="single" selected={filterDate} onSelect={setFilterDate} /></PopoverContent></Popover></div></CardHeader><CardContent className="space-y-4">{renderNewsletterList()}</CardContent></Card></TabsContent>
                 <TabsContent value="categories" className="mt-6"><div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">{renderMyCategories()}</div></TabsContent>
-                <TabsContent value="users" className="mt-6"><Card><CardHeader><div className='flex items-center justify-between'><div><CardTitle className="flex items-center gap-2"><Users className='w-5 h-5' /> Subscribed Users</CardTitle><CardDescription>Users subscribed to your assigned categories.</CardDescription></div><Button onClick={() => setIsAddUserDialogOpen(true)}><Plus className='w-4 h-4 mr-2'/>Add User</Button></div></CardHeader><CardContent><Table><TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Email</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader><TableBody>{renderUserList()}</TableBody></Table></CardContent></Card></TabsContent>
+                <TabsContent value="users" className="mt-6"><Card><CardHeader><div className='flex items-center justify-between'><div><CardTitle className="flex items-center gap-2"><Users className='w-5 h-5' /> Subscribed Users</CardTitle><CardDescription>Users subscribed to your assigned categories.</CardDescription></div>
+                <DropdownMenu><DropdownMenuTrigger asChild><Button><Plus className='w-4 h-4 mr-2' />Add User</Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onSelect={() => setIsAddUserDialogOpen(true)}><UserPlus className="mr-2 h-4 w-4" />Create New User</DropdownMenuItem><DropdownMenuItem onSelect={handleOpenAddExistingDialog}><ChevronsUpDown className="mr-2 h-4 w-4" />Add Existing Users</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
+                </div></CardHeader><CardContent><Table><TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Email</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader><TableBody>{renderUserList()}</TableBody></Table></CardContent></Card></TabsContent>
             </Tabs>
         </div>
-        <Dialog open={isShareDialogOpen} onOpenChange={setIsShareDialogOpen}><DialogContent className="sm:max-w-lg"><DialogHeader><DialogTitle>Share Newsletter: {sharingNewsletter?.title}</DialogTitle><DialogDescription>Select recipient groups or search all users.</DialogDescription></DialogHeader>
-        <Tabs defaultValue="my-subscribers" className="w-full pt-4"><TabsList className='grid w-full grid-cols-2'>
-            <TabsTrigger value="my-subscribers">Subscribers</TabsTrigger>
-            <TabsTrigger value="all-users">All Users</TabsTrigger>
-        </TabsList>
-            <TabsContent value="my-subscribers" className='mt-4'>
-                <ScrollArea className="h-72 w-full p-1">
-                    <div className="space-y-2 pr-4">
-                        {isLoadingAllCategories || isLoadingAllUsers ? (
-                            <Skeleton className="h-20 w-full" />
-                        ) : allCategoriesError ? (
-                            <Alert variant="destructive"><AlertDescription>{allCategoriesError.message}</AlertDescription></Alert>
-                        ) : !allSystemCategories || allSystemCategories.length === 0 ? (
-                            <p className="text-center text-sm text-muted-foreground py-4">
-                                No categories found in the system.
-                            </p>
-                        ) : (
-                            allSystemCategories.map((cat) => {
-                                const categoryId = `cat-group-${cat.name.replace(/\s+/g, '-').toLowerCase()}`;
-                                const users = groupedUsersByCategory[cat.name] || [];
-                                const isSelected = users.length > 0 && users.every(u => selectedUserIds.includes(u._id));
-
-                                return (
-                                    <div key={cat._id} className="flex items-center space-x-2">
-                                        <Checkbox
-                                            id={categoryId}
-                                            checked={isSelected}
-                                            disabled={users.length === 0}
-                                            onCheckedChange={(checked) => handleCategorySelection(users, Boolean(checked))}
-                                        />
-                                        <Label
-                                            htmlFor={categoryId}
-                                            className={cn("font-medium", users.length === 0 && "text-muted-foreground")}
-                                        >
-                                            {cat.name} ({users.length} users)
-                                        </Label>
-                                    </div>
-                                );
-                            })
-                        )}
-                    </div>
-                </ScrollArea>
-            </TabsContent>
-            <TabsContent value="all-users" className='mt-4'><Input placeholder="Search all users..." value={shareSearchTerm} onChange={(e) => setShareSearchTerm(e.target.value)} className='mb-4'/><div className="flex items-center space-x-2 border-y py-2 px-1"><Checkbox id="select-all" checked={filteredAllUsers.length > 0 && filteredAllUsers.every(u => selectedUserIds.includes(u._id))} onCheckedChange={(checked) => handleSelectAllFiltered(Boolean(checked))}/><Label htmlFor="select-all">Select All ({filteredAllUsers.length})</Label></div><ScrollArea className="h-60 w-full pt-2">{isLoadingAllUsers ? <Skeleton className="h-20 w-full" /> : filteredAllUsers.length === 0 ? <p className="text-center text-sm text-muted-foreground py-4">No users found.</p> : filteredAllUsers.map(user => (<div key={user._id} className="flex items-center space-x-2 p-1"><Checkbox id={`all-user-${user._id}`} checked={selectedUserIds.includes(user._id)} onCheckedChange={(checked) => handleCategorySelection([user], Boolean(checked))}/><Label htmlFor={`all-user-${user._id}`} className="w-full">{user.name} <span className="text-muted-foreground">({user.email})</span></Label></div>))}</ScrollArea></TabsContent>
-        </Tabs>
-        <DialogFooter className='pt-4'><Button type="button" variant="secondary" onClick={() => setIsShareDialogOpen(false)}>Cancel</Button><Button type="submit" onClick={handleShareSubmit} disabled={selectedUserIds.length === 0 || shareNewsletterMutation.isPending}>{shareNewsletterMutation.isPending ? 'Sending...' : `Send to ${selectedUserIds.length} User(s)`}</Button></DialogFooter></DialogContent></Dialog>
+        <Dialog open={isShareDialogOpen} onOpenChange={setIsShareDialogOpen}><DialogContent className="sm:max-w-lg"><DialogHeader><DialogTitle>Share Newsletter: {sharingNewsletter?.title}</DialogTitle><DialogDescription>Select recipient groups or search all users.</DialogDescription></DialogHeader><Tabs defaultValue="my-subscribers" className="w-full pt-4"><TabsList className='grid w-full grid-cols-2'><TabsTrigger value="my-subscribers">Subscribers</TabsTrigger><TabsTrigger value="all-users">All Users</TabsTrigger></TabsList><TabsContent value="my-subscribers" className='mt-4'><ScrollArea className="h-72 w-full p-1"><div className="space-y-2 pr-4">{isLoadingAllCategories || isLoadingAllUsers ? (<Skeleton className="h-20 w-full" />) : allCategoriesError ? (<Alert variant="destructive"><AlertDescription>{allCategoriesError.message}</AlertDescription></Alert>) : !allSystemCategories || allSystemCategories.length === 0 ? (<p className="text-center text-sm text-muted-foreground py-4">No categories found in the system.</p>) : (allSystemCategories.map((cat) => { const categoryId = `cat-group-${cat.name.replace(/\s+/g, '-').toLowerCase()}`; const users = groupedUsersByCategory[cat.name] || []; const isSelected = users.length > 0 && users.every(u => selectedUserIds.includes(u._id)); return (<div key={cat._id} className="flex items-center space-x-2"><Checkbox id={categoryId} checked={isSelected} disabled={users.length === 0} onCheckedChange={(checked) => handleCategorySelection(users, Boolean(checked))}/><Label htmlFor={categoryId} className={cn("font-medium", users.length === 0 && "text-muted-foreground")}>{cat.name} ({users.length} users)</Label></div>); }))}</div></ScrollArea></TabsContent><TabsContent value="all-users" className='mt-4'><Input placeholder="Search all users..." value={shareSearchTerm} onChange={(e) => setShareSearchTerm(e.target.value)} className='mb-4'/><div className="flex items-center space-x-2 border-y py-2 px-1"><Checkbox id="select-all" checked={filteredAllUsers.length > 0 && filteredAllUsers.every(u => selectedUserIds.includes(u._id))} onCheckedChange={(checked) => handleSelectAllFiltered(Boolean(checked))}/><Label htmlFor="select-all">Select All ({filteredAllUsers.length})</Label></div><ScrollArea className="h-60 w-full pt-2">{isLoadingAllUsers ? <Skeleton className="h-20 w-full" /> : filteredAllUsers.length === 0 ? <p className="text-center text-sm text-muted-foreground py-4">No users found.</p> : filteredAllUsers.map(user => (<div key={user._id} className="flex items-center space-x-2 p-1"><Checkbox id={`all-user-${user._id}`} checked={selectedUserIds.includes(user._id)} onCheckedChange={(checked) => handleCategorySelection([user], Boolean(checked))}/><Label htmlFor={`all-user-${user._id}`} className="w-full">{user.name} <span className="text-muted-foreground">({user.email})</span></Label></div>))}</ScrollArea></TabsContent></Tabs><DialogFooter className='pt-4'><Button type="button" variant="secondary" onClick={() => setIsShareDialogOpen(false)}>Cancel</Button><Button type="submit" onClick={handleShareSubmit} disabled={selectedUserIds.length === 0 || shareNewsletterMutation.isPending}>{shareNewsletterMutation.isPending ? 'Sending...' : `Send to ${selectedUserIds.length} User(s)`}</Button></DialogFooter></DialogContent></Dialog>
         <Dialog open={isCurationDialogOpen} onOpenChange={setIsCurationDialogOpen}><DialogContent className="sm:max-w-4xl"><DialogHeader><DialogTitle>News Curation</DialogTitle><DialogDescription>Review, summarize, and select news to save for later.</DialogDescription></DialogHeader><div className="space-y-4 max-h-[70vh] overflow-y-auto p-1 pr-4">{renderNewsArticleList()}</div><DialogFooter className="sm:justify-between items-center"><p className="text-sm text-muted-foreground">Selected Articles: <span className="font-bold">{selectedRawArticles.length}</span></p><div className="flex items-center gap-2"><Button type="button" variant="secondary" onClick={() => setIsCurationDialogOpen(false)}>Close</Button><Button onClick={handleSave} disabled={selectedRawArticles.length === 0 || saveMutation.isPending}><Save className='w-4 h-4 mr-2'/>{saveMutation.isPending ? "Saving..." : `Save Selected`}</Button></div></DialogFooter></DialogContent></Dialog>
         <Dialog open={isAddUserDialogOpen} onOpenChange={setIsAddUserDialogOpen}><DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle>Add a New User</DialogTitle><DialogDescription>A default password will be generated.</DialogDescription></DialogHeader><form onSubmit={addUserForm.handleSubmit((data) => addUserMutation.mutate(data))} className="space-y-4 pt-4"><div><Label htmlFor="name">Full Name</Label><Input id="name" {...addUserForm.register("name")} />{addUserForm.formState.errors.name && <p className="text-sm text-destructive mt-1">{addUserForm.formState.errors.name.message}</p>}</div><div><Label htmlFor="email">Email Address</Label><Input id="email" type="email" {...addUserForm.register("email")} />{addUserForm.formState.errors.email && <p className="text-sm text-destructive mt-1">{addUserForm.formState.errors.email.message}</p>}</div><div><Label>Assign to Categories</Label><div className="space-y-2 rounded-md border p-4 max-h-40 overflow-y-auto"><Controller name="categories" control={addUserForm.control} render={({ field }) => (<>{isLoadingCategoryStats ? <Skeleton className='h-5 w-20'/> : categoryStats?.map((cat) => (<div key={cat.name} className="flex items-center space-x-2"><Checkbox id={`cat-${cat.name}`} checked={field.value?.includes(cat.name)} onCheckedChange={(checked) => { const current = field.value || []; const newCategories = checked ? [...current, cat.name] : current.filter(name => name !== cat.name); field.onChange(newCategories);}}/><label htmlFor={`cat-${cat.name}`} className="text-sm font-medium">{cat.name}</label></div>))}</>)}/></div></div><DialogFooter><Button type="button" variant="secondary" onClick={() => setIsAddUserDialogOpen(false)}>Cancel</Button><Button type="submit" disabled={addUserMutation.isPending}>{addUserMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin"/> : "Create User"}</Button></DialogFooter></form></DialogContent></Dialog>
         <Dialog open={!!createdUserInfo} onOpenChange={() => setCreatedUserInfo(null)}><DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle className='flex items-center gap-2'><UserPlus className='w-5 h-5 text-green-600'/>User Created</DialogTitle><DialogDescription>Please share these credentials with the user.</DialogDescription></DialogHeader><div className="space-y-4 py-4"><p><strong>Name:</strong> {createdUserInfo?.name}</p><p><strong>Email:</strong> {createdUserInfo?.email}</p><div className='flex items-center gap-2'><p><strong>Password:</strong> <span className="font-mono bg-gray-100 p-1 rounded">{createdUserInfo?.password_was}</span></p><Button variant='outline' size='icon' className='h-7 w-7' onClick={() => {navigator.clipboard.writeText(createdUserInfo?.password_was || ''); toast.success("Password copied!");}}><Copy className='w-4 h-4'/></Button></div></div><DialogFooter><Button onClick={() => setCreatedUserInfo(null)}>Close</Button></DialogFooter></DialogContent></Dialog>
+        {/* --- DIALOG FOR ADDING EXISTING USERS --- */}
+        <Dialog open={isAddExistingUserDialogOpen} onOpenChange={setIsAddExistingUserDialogOpen}>
+            <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                    <DialogTitle>Add Existing Users</DialogTitle>
+                    <DialogDescription>
+                        Select users from the list to add to your managed category.
+                    </DialogDescription>
+                </DialogHeader>
+                <div className="pt-4">
+                    <ScrollArea className="h-72 w-full rounded-md border p-2">
+                        {isLoadingAllUsers ? (
+                            <div className="space-y-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}</div>
+                        ) : assignableUsers.length === 0 ? (
+                            <p className="text-center text-sm text-muted-foreground py-10">All existing users are already subscribed to your categories.</p>
+                        ) : (
+                            <div className="space-y-1">
+                                {assignableUsers.map(user => (
+                                    <div key={user._id} className="flex items-center space-x-3 p-2 rounded-md hover:bg-accent">
+                                        <Checkbox 
+                                            id={`add-user-${user._id}`}
+                                            checked={usersToAdd.includes(user._id)}
+                                            onCheckedChange={(checked) => {
+                                                setUsersToAdd(prev => 
+                                                    checked ? [...prev, user._id] : prev.filter(id => id !== user._id)
+                                                );
+                                            }}
+                                        />
+                                        <Label htmlFor={`add-user-${user._id}`} className="w-full font-normal">
+                                            {user.name} <span className="text-muted-foreground text-xs">({user.email})</span>
+                                        </Label>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </ScrollArea>
+                </div>
+                <DialogFooter>
+                    <Button type="button" variant="secondary" onClick={() => setIsAddExistingUserDialogOpen(false)}>Cancel</Button>
+                    <Button type="submit" onClick={handleAddExistingUsersSubmit} disabled={usersToAdd.length === 0 || addUsersToCategoryMutation.isPending}>
+                        {addUsersToCategoryMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                        Add {usersToAdd.length > 0 ? usersToAdd.length : ''} User(s)
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
       </div>
     );
 };
