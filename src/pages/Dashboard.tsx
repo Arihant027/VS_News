@@ -74,7 +74,12 @@ const Dashboard = () => {
     // --- Data Fetching ---
     const { data: newsletters, isLoading: isLoadingNewsletters, error: newslettersError } = useQuery<Newsletter[], Error>({ queryKey: ['myNewsletters'], queryFn: () => fetchWithToken('/newsletters', token), enabled: !!token });
     const { data: subscribers, isLoading: isLoadingSubscribers, error: subscribersError } = useQuery<Subscriber[], Error>({ queryKey: ['mySubscribers'], queryFn: () => fetchWithToken('/admins/my-subscribers', token), enabled: !!token });
-    const { data: categoryStats, isLoading: isLoadingCategoryStats, error: categoryStatsError } = useQuery<CategoryStat[], Error>({ queryKey: ['myCategoryStats'], queryFn: () => fetchWithToken('/admins/my-categories-stats', token), enabled: !!token });
+    const { data: categoryStats, isLoading: isLoadingCategoryStats, error: categoryStatsError } = useQuery<CategoryStat[], Error>({
+        queryKey: ['myCategoryStats'],
+        queryFn: () => fetchWithToken('/admins/my-categories-stats', token),
+        enabled: !!token,
+        refetchInterval: 20000, // Refetch every 20 seconds
+    });
     const { data: newsData, isLoading: isLoadingNews, error: newsError } = useQuery<{ articles: NewsArticle[] }, Error>({ queryKey: ['newsArticles'], queryFn: () => fetchWithToken('/news', token), enabled: !!token });
     const { data: allUsers, isLoading: isLoadingAllUsers } = useQuery<Subscriber[], Error>({ queryKey: ['allUsers'], queryFn: () => fetchWithToken('/admins/all-users', token), enabled: !!token && (isShareDialogOpen || isAddExistingUserDialogOpen) });
     const { data: savedArticles, isLoading: isLoadingSaved, error: savedArticlesError } = useQuery<CuratedArticle[], Error>({ queryKey: ['savedArticles', articleFilter], queryFn: () => { const endpoint = articleFilter === 'all' ? '/articles' : `/articles?timeframe=${articleFilter}`; return fetchWithToken(endpoint, token); }, enabled: !!token });
