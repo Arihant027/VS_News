@@ -96,20 +96,21 @@ router.post('/add-user', auth, async (req, res) => {
 
 router.patch('/remove-user-from-category', auth, async (req, res) => {
     try {
-        const { userId } = req.body;
-        if (!userId) {
-            return res.status(400).json({ message: 'User ID is required.' });
+        const { userId, categoryName } = req.body;
+        if (!userId || !categoryName) {
+            return res.status(400).json({ message: 'User ID and Category Name are required.' });
         }
         
         const admin = await User.findById(req.user);
-        const adminCategory = admin.categories[0];
-        if (!adminCategory) {
-            return res.status(400).json({ message: 'Admin is not assigned to a category.' });
+
+        // Authorization check
+        if (!admin.categories.includes(categoryName)) {
+            return res.status(403).json({ message: 'You are not authorized to manage this category.' });
         }
 
         const updatedUser = await User.findByIdAndUpdate(
             userId,
-            { $pull: { categories: adminCategory } },
+            { $pull: { categories: categoryName } },
             { new: true }
         );
 
@@ -117,30 +118,31 @@ router.patch('/remove-user-from-category', auth, async (req, res) => {
             return res.status(404).json({ message: 'User not found.' });
         }
 
-        res.json({ message: `User was successfully removed from the ${adminCategory} category.` });
+        res.json({ message: `User was successfully removed from the ${categoryName} category.` });
         
     } catch (err) {
         res.status(500).json({ message: 'Server error while removing user from category.', error: err.message });
     }
 });
 
-// START: NEW ROUTE TO ADD EXISTING USERS TO A CATEGORY
+// FIX: This route now correctly handles adding users to a specific category
 router.patch('/add-users-to-category', auth, async (req, res) => {
     try {
-        const { userIds } = req.body;
+        const { userIds, category } = req.body;
         if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
             return res.status(400).json({ message: 'An array of user IDs is required.' });
         }
+        if (!category) {
+            return res.status(400).json({ message: 'A category must be specified to add users to.' });
+        }
         
         const admin = await User.findById(req.user);
-        // Assumes an admin manages one primary category, based on existing app logic
-        const adminCategory = admin.categories[0]; 
-        if (!adminCategory) {
-            return res.status(400).json({ message: 'Admin is not assigned to any category.' });
+        if (!admin.categories.includes(category)) {
+            return res.status(403).json({ message: 'You are not authorized to add users to this category.' });
         }
+        
+        const adminCategory = category; 
 
-        // Use $addToSet to add the category to the users' categories array.
-        // This prevents adding duplicate categories if a user is already subscribed.
         const result = await User.updateMany(
             { _id: { $in: userIds } },
             { $addToSet: { categories: adminCategory } }
@@ -160,7 +162,7 @@ router.patch('/add-users-to-category', auth, async (req, res) => {
         res.status(500).json({ message: 'Server error while adding users to category.', error: err.message });
     }
 });
-// END: NEW ROUTE
+
 
 // POST - Add a new admin (by superadmin)
 router.post('/', auth, async (req, res) => {
@@ -196,7 +198,6 @@ router.patch('/:id', auth, async (req, res) => {
         adminToUpdate.status = status;
         adminToUpdate.categories = newCategories;
 
-        // CORRECTED: If a new password is provided, hash and update it
         if (password && password.length > 0) {
             const salt = await bcrypt.genSalt();
             adminToUpdate.password = await bcrypt.hash(password, salt);

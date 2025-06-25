@@ -1,5 +1,5 @@
 // src/pages/Dashboard.tsx
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,6 +28,7 @@ import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { cn } from '@/lib/utils';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 
 // --- Data Types ---
 interface Newsletter { _id: string; title: string; category: string; status: 'Not Sent' | 'pending' | 'approved' | 'declined' | 'sent'; articles: { _id: string }[]; createdAt: string; }
@@ -66,6 +67,7 @@ const Dashboard = () => {
     const [createdUserInfo, setCreatedUserInfo] = useState<{ name: string; email: string; password_was: string } | null>(null);
     const [shareSearchTerm, setShareSearchTerm] = useState('');
     const [articleFilter, setArticleFilter] = useState('all');
+    const [categoryToAdd, setCategoryToAdd] = useState<string>('');
 
     const addUserForm = useForm<AddUserFormData>({ resolver: zodResolver(addUserSchema), defaultValues: { name: "", email: "", categories: [] } });
     
@@ -80,27 +82,51 @@ const Dashboard = () => {
 
     // --- Mutations ---
     const addUserMutation = useMutation({
-      mutationFn: (data: AddUserFormData) => fetchWithToken('/admins/add-user', token, { method: 'POST', body: JSON.stringify(data) }),
-      onSuccess: (data) => {
-        toast.success(data.message);
-        queryClient.invalidateQueries({ queryKey: ['mySubscribers'] });
-        queryClient.invalidateQueries({ queryKey: ['myCategoryStats'] });
-        setIsAddUserDialogOpen(false);
-        setCreatedUserInfo({ ...data.user, password_was: data.password });
-        addUserForm.reset();
-      },
-      onError: (err: Error) => toast.error(err.message),
+        mutationFn: (data: AddUserFormData) => fetchWithToken('/admins/add-user', token, { method: 'POST', body: JSON.stringify(data) }),
+        onSuccess: (data) => {
+            toast.success(data.message);
+            setIsAddUserDialogOpen(false);
+            setCreatedUserInfo({ ...data.user, password_was: data.password });
+            addUserForm.reset();
+        },
+        onError: (err: Error) => toast.error(err.message),
+        onSettled: () => {
+            queryClient.invalidateQueries({ queryKey: ['mySubscribers'] });
+            queryClient.invalidateQueries({ queryKey: ['myCategoryStats'] });
+        },
     });
+
     const addUsersToCategoryMutation = useMutation({
-      mutationFn: (userIds: string[]) => fetchWithToken('/admins/add-users-to-category', token, { method: 'PATCH', body: JSON.stringify({ userIds }) }),
-      onSuccess: (data) => {
-        toast.success(data.message);
-        queryClient.invalidateQueries({ queryKey: ['mySubscribers', 'myCategoryStats'] });
-        setIsAddExistingUserDialogOpen(false);
-      },
-      onError: (err: Error) => toast.error(err.message),
+        mutationFn: (data: { userIds: string[], category: string }) => fetchWithToken('/admins/add-users-to-category', token, { method: 'PATCH', body: JSON.stringify(data) }),
+        onSuccess: (data) => {
+            toast.success(data.message);
+            setIsAddExistingUserDialogOpen(false);
+        },
+        onError: (err: Error) => toast.error(err.message),
+        onSettled: () => {
+            queryClient.invalidateQueries({ queryKey: ['mySubscribers'] });
+            queryClient.invalidateQueries({ queryKey: ['myCategoryStats'] });
+        }
     });
-    const removeUserFromCategoryMutation = useMutation({ mutationFn: (userId: string) => fetchWithToken('/admins/remove-user-from-category', token, { method: 'PATCH', body: JSON.stringify({ userId }) }), onSuccess: (data) => { toast.success(data.message); queryClient.invalidateQueries({ queryKey: ['mySubscribers', 'myCategoryStats'] }); }, onError: (err: Error) => toast.error(err.message), });
+
+    const removeUserFromCategoryMutation = useMutation({
+        mutationFn: ({ userId, categoryName }: { userId: string, categoryName: string }) =>
+            fetchWithToken('/admins/remove-user-from-category', token, {
+                method: 'PATCH',
+                body: JSON.stringify({ userId, categoryName }),
+            }),
+        onSuccess: (data) => {
+            toast.success(data.message);
+        },
+        onError: (err: Error) => {
+            toast.error(err.message);
+        },
+        onSettled: () => {
+            queryClient.invalidateQueries({ queryKey: ['mySubscribers'] });
+            queryClient.invalidateQueries({ queryKey: ['myCategoryStats'] });
+        },
+    });
+    
     const updateStatusMutation = useMutation({ mutationFn: ({ id, status }: { id: string; status: 'approved' | 'declined' }) => fetchWithToken(`/newsletters/${id}/status`, token, { method: 'PATCH', body: JSON.stringify({ status }) }), onSuccess: () => { toast.success("Newsletter status updated!"); queryClient.invalidateQueries({ queryKey: ['myNewsletters'] }); }, onError: (err: Error) => toast.error(err.message), });
     const summarizeMutation = useMutation({
         mutationFn: (article: NewsArticle) => {
@@ -133,7 +159,24 @@ const Dashboard = () => {
     const handleSave = () => { const articlesToSave = selectedRawArticles.map(a => ({ ...a, summary: summarizedArticles[a.url] || a.description })); saveMutation.mutate(articlesToSave); };
     const handleSelectCuratedArticle = (article: CuratedArticle, isSelected: boolean) => { setSelectedCuratedArticles(prev => isSelected ? [...prev, article] : prev.filter(a => a._id !== article._id)); };
     const handleGeneratePdf = () => { if (!newsletterTitle) { toast.warning("Please enter a title."); return; } if (selectedCuratedArticles.length === 0) { toast.warning("Please select at least one article."); return; } const category = selectedCuratedArticles[0]?.category; if (!category) { toast.error("Could not determine category."); return; } generatePdfMutation.mutate({ articles: selectedCuratedArticles, title: newsletterTitle, category }); };
-    const handleAddExistingUsersSubmit = () => { if (usersToAdd.length === 0) { toast.warning("Please select at least one user to add."); return; } addUsersToCategoryMutation.mutate(usersToAdd); };
+    
+    useEffect(() => {
+        if (isAddExistingUserDialogOpen && categoryStats && categoryStats.length > 0 && !categoryToAdd) {
+            setCategoryToAdd(categoryStats[0].name);
+        }
+    }, [isAddExistingUserDialogOpen, categoryStats, categoryToAdd]);
+    
+    const handleAddExistingUsersSubmit = () => {
+        if (usersToAdd.length === 0) {
+            toast.warning("Please select at least one user to add.");
+            return;
+        }
+        if (!categoryToAdd) {
+            toast.warning("Please select a category.");
+            return;
+        }
+        addUsersToCategoryMutation.mutate({ userIds: usersToAdd, category: categoryToAdd });
+    };
     
     const assignableUsers = useMemo(() => { if (!allUsers) return []; if (!subscribers) return allUsers; const subscribedIds = new Set(subscribers.map(s => s._id)); return allUsers.filter(u => !subscribedIds.has(u._id)); }, [allUsers, subscribers]);
     const groupedUsersByCategory = useMemo(() => { if (!allUsers) return {}; return allUsers.reduce((acc, user) => { user.categories.forEach(category => { if (!acc[category]) { acc[category] = []; } acc[category].push(user); }); return acc; }, {} as Record<string, Subscriber[]>); }, [allUsers]);
@@ -154,7 +197,68 @@ const Dashboard = () => {
     const renderNewsletterList = () => { if (isLoadingNewsletters) return Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-24 w-full" />); if (newslettersError) return <Alert variant="destructive"><AlertDescription>{newslettersError.message}</AlertDescription></Alert>; if (!filteredNewsletters || filteredNewsletters.length === 0) { return <p className="text-center text-muted-foreground py-8">{filterDate ? "No newsletters found for this date." : "No newsletters have been generated yet."}</p>; } return filteredNewsletters.map((newsletter) => { const statusProps = getStatusProps(newsletter.status); return (<div key={newsletter._id} className="flex items-center justify-between p-4 border rounded-lg hover:bg-accent"><div className="flex-1"><div className="flex items-center gap-3 mb-2"><h3 className="font-semibold">{newsletter.title}</h3><Badge variant="outline">{newsletter.category}</Badge><Badge className={statusProps.color}>{statusProps.icon}<span className="ml-1">{statusProps.text}</span></Badge></div></div><div className="flex items-center gap-2 ml-4"><Button size="sm" variant="outline" onClick={() => downloadPdfMutation.mutate(newsletter._id)} disabled={downloadPdfMutation.isPending && downloadPdfMutation.variables === newsletter._id}>{downloadPdfMutation.isPending && downloadPdfMutation.variables === newsletter._id ? <Loader2 className="w-4 h-4 animate-spin"/> : 'View PDF'}</Button><Button size="icon" variant="secondary" className="h-9 w-9" onClick={() => handleOpenShareDialog(newsletter)}><Share2 className="h-4 w-4" /></Button><Button size="icon" variant="destructive" className="h-9 w-9" onClick={() => deleteNewsletterMutation.mutate(newsletter._id)} disabled={deleteNewsletterMutation.isPending && deleteNewsletterMutation.variables === newsletter._id}>{deleteNewsletterMutation.isPending && deleteNewsletterMutation.variables === newsletter._id ? <Loader2 className="h-4 h-4 animate-spin" /> : <Trash2 className="h-4 h-4" />}</Button>{newsletter.status === 'pending' && (<><Button size="sm" variant="destructive" onClick={() => updateStatusMutation.mutate({ id: newsletter._id, status: 'declined' })} disabled={updateStatusMutation.isPending}><XCircle className="w-4 h-4 mr-1"/>Decline</Button><Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => updateStatusMutation.mutate({ id: newsletter._id, status: 'approved' })} disabled={updateStatusMutation.isPending}><CheckCircle className="w-4 h-4 mr-1"/>Approve</Button></>)}</div></div>); }); };
     const renderNewsArticleList = () => { if (isLoadingNews) return Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-40 w-full rounded-lg" />); if (newsError) return <Alert variant="destructive"><AlertDescription>{newsError.message}</AlertDescription></Alert>; if (!newsData || newsData.articles.length === 0) return <div className="text-center py-10"><p className="text-muted-foreground">No recent news articles found.</p></div>; return newsData.articles.map((article) => (<Card key={article.url} className="overflow-hidden"><div className="p-6 flex flex-col justify-between flex-1"><div><Badge variant="secondary" className="mb-2">{article.source.name}</Badge><CardTitle className="text-lg mb-2">{article.title}</CardTitle><CardDescription>{article.description}</CardDescription>{summarizedArticles[article.url] && (<div className='mt-4'><Label className='text-xs font-semibold text-primary'>AI Summary</Label><Textarea readOnly value={summarizedArticles[article.url]} className="mt-1 bg-primary/10" rows={5} /></div>)}</div><div className='flex items-center justify-between mt-4'><div className="flex items-center gap-2"><Button variant="outline" size="sm" asChild><a href={article.url} target="_blank" rel="noopener noreferrer">Read More <ExternalLink className="w-3 h-3 ml-2"/></a></Button><Button variant="secondary" size="sm" onClick={() => summarizeMutation.mutate(article)} disabled={summarizeMutation.isPending}>{summarizeMutation.isPending && summarizeMutation.variables?.url === article.url ? <Loader2 className="w-4 h-4 animate-spin"/> : <Sparkles className="w-4 h-4" />}<span className='ml-2'>Summarize</span></Button></div><div className="flex items-center space-x-2"><Checkbox id={article.url} checked={selectedRawArticles.some(sa => sa.url === article.url)} onCheckedChange={(checked) => handleSelectRawArticle(article, Boolean(checked))}/><label htmlFor={article.url} className="text-sm font-medium">Select</label></div></div></div></Card>)); };
     const renderMyCategories = () => { if (isLoadingCategoryStats) return Array.from({ length: 2 }).map((_, i) => <Card key={i}><CardHeader><Skeleton className="h-6 w-1/2" /></CardHeader><CardContent><Skeleton className="h-10 w-full" /></CardContent></Card>); if (categoryStatsError) return <Alert variant="destructive" className="col-span-full"><AlertDescription>{categoryStatsError.message}</AlertDescription></Alert>; if (!categoryStats || categoryStats.length === 0) return <p className="text-muted-foreground col-span-full text-center py-8">You are not assigned to any categories.</p>; return categoryStats.map((cat) => (<Card key={cat.name} className="hover:shadow-lg transition-shadow"><CardHeader><CardTitle className="text-primary">{cat.name}</CardTitle><CardDescription>Live statistics</CardDescription></CardHeader><CardContent><div className="space-y-3"><div className="flex justify-between items-center text-sm"><span className="flex items-center text-muted-foreground"><Users className="w-4 h-4 mr-2"/>Subscribers</span><span className="font-bold text-lg">{cat.subscriberCount}</span></div><div className="flex justify-between items-center text-sm"><span className="flex items-center text-muted-foreground"><Newspaper className="w-4 h-4 mr-2"/>Newsletters</span><span className="font-bold text-lg">{cat.newsletterCount}</span></div></div></CardContent></Card>)); };
-    const renderUserList = () => { if (isLoadingSubscribers) return Array.from({ length: 3 }).map((_, i) => <TableRow key={i}><TableCell colSpan={3}><Skeleton className="h-5 w-full" /></TableCell></TableRow>); if (subscribersError) return <TableRow><TableCell colSpan={3}><Alert variant="destructive"><AlertDescription>{subscribersError.message}</AlertDescription></Alert></TableCell></TableRow>; if (!subscribers || subscribers.length === 0) return <TableRow><TableCell colSpan={3} className="text-center h-24">No users have subscribed yet.</TableCell></TableRow>; return subscribers.map((s) => (<TableRow key={s._id}><TableCell className="font-medium">{s.name}</TableCell><TableCell>{s.email}</TableCell><TableCell className="text-right"><Button variant="ghost" size="sm" className='text-destructive hover:text-destructive' onClick={() => removeUserFromCategoryMutation.mutate(s._id)} disabled={removeUserFromCategoryMutation.isPending && removeUserFromCategoryMutation.variables === s._id}>{removeUserFromCategoryMutation.isPending && removeUserFromCategoryMutation.variables === s._id ? <Loader2 className='w-4 h-4 animate-spin' /> : <Trash2 className='w-4 h-4' />}</Button></TableCell></TableRow>)); };
+    const renderUserManagement = () => {
+        if (isLoadingSubscribers || isLoadingCategoryStats) {
+            return <Skeleton className="h-40 w-full" />;
+        }
+        if (subscribersError || categoryStatsError) {
+            return <Alert variant="destructive"><AlertDescription>{subscribersError?.message || categoryStatsError?.message}</AlertDescription></Alert>;
+        }
+        if (!categoryStats || categoryStats.length === 0) {
+            return <p className="text-center text-muted-foreground py-8">You are not assigned to any categories.</p>;
+        }
+        return (
+            <Accordion type="single" collapsible className="w-full">
+                {categoryStats.map((cat) => {
+                    const usersInCategory = subscribers?.filter(s => s.categories.includes(cat.name)) || [];
+                    return (
+                        <AccordionItem value={cat.name} key={cat.name}>
+                            <AccordionTrigger>
+                                <div className="flex items-center gap-4">
+                                    <span className="font-semibold">{cat.name}</span>
+                                    <Badge variant="secondary">{usersInCategory.length} Subscribers</Badge>
+                                </div>
+                            </AccordionTrigger>
+                            <AccordionContent>
+                                {usersInCategory.length > 0 ? (
+                                    <Table>
+                                        <TableHeader>
+                                            <TableRow>
+                                                <TableHead>Name</TableHead>
+                                                <TableHead>Email</TableHead>
+                                                <TableHead className="text-right">Action</TableHead>
+                                            </TableRow>
+                                        </TableHeader>
+                                        <TableBody>
+                                            {usersInCategory.map((user) => (
+                                                <TableRow key={user._id}>
+                                                    <TableCell className="font-medium">{user.name}</TableCell>
+                                                    <TableCell>{user.email}</TableCell>
+                                                    <TableCell className="text-right">
+                                                        <Button 
+                                                            variant="ghost" 
+                                                            size="sm" 
+                                                            className='text-destructive hover:text-destructive' 
+                                                            onClick={() => removeUserFromCategoryMutation.mutate({ userId: user._id, categoryName: cat.name })}
+                                                            disabled={removeUserFromCategoryMutation.isPending && removeUserFromCategoryMutation.variables?.userId === user._id}
+                                                        >
+                                                            {removeUserFromCategoryMutation.isPending && removeUserFromCategoryMutation.variables?.userId === user._id ? <Loader2 className='w-4 h-4 animate-spin' /> : <Trash2 className='w-4 h-4' />}
+                                                        </Button>
+                                                    </TableCell>
+                                                </TableRow>
+                                            ))}
+                                        </TableBody>
+                                    </Table>
+                                ) : (
+                                    <p className="text-center text-sm text-muted-foreground p-4">No users subscribed to this category yet.</p>
+                                )}
+                            </AccordionContent>
+                        </AccordionItem>
+                    );
+                })}
+            </Accordion>
+        );
+    };
     const renderNewsletterCreator = () => { if (isLoadingSaved) return Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />); if (savedArticlesError) return <Alert variant="destructive"><AlertDescription>{savedArticlesError.message}</AlertDescription></Alert>; if (!savedArticles || savedArticles.length === 0) return <div className="text-center py-10"><p className="text-muted-foreground">You have no saved articles yet.</p></div>; return savedArticles.map((article) => (<div key={article._id} className="flex items-center space-x-4 p-2 border-b"><Checkbox id={article._id} checked={selectedCuratedArticles.some(a => a._id === article._id)} onCheckedChange={(checked) => handleSelectCuratedArticle(article, Boolean(checked))} /><div className="flex-1"><Label htmlFor={article._id} className="font-medium">{article.title}</Label><p className="text-xs text-muted-foreground">{article.sourceName}</p></div><Badge variant="outline">{article.category}</Badge><Button size="icon" variant="destructive" className="h-8 w-8 shrink-0" onClick={() => deleteArticleMutation.mutate(article._id)} disabled={deleteArticleMutation.isPending && deleteArticleMutation.variables === article._id}>{deleteArticleMutation.isPending && deleteArticleMutation.variables === article._id ? <Loader2 className="h-4 h-4 animate-spin" /> : <Trash2 className="h-4 h-4" />}</Button></div>)); };
 
     return (
@@ -198,7 +302,7 @@ const Dashboard = () => {
                 <TabsContent value="categories" className="mt-6"><div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">{renderMyCategories()}</div></TabsContent>
                 <TabsContent value="users" className="mt-6"><Card><CardHeader><div className='flex items-center justify-between'><div><CardTitle className="flex items-center gap-2"><Users className='w-5 h-5' /> Subscribed Users</CardTitle><CardDescription>Users subscribed to your assigned categories.</CardDescription></div>
                 <DropdownMenu><DropdownMenuTrigger asChild><Button><Plus className='w-4 h-4 mr-2' />Add User</Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onSelect={() => setIsAddUserDialogOpen(true)}><UserPlus className="mr-2 h-4 w-4" />Create New User</DropdownMenuItem><DropdownMenuItem onSelect={handleOpenAddExistingDialog}><ChevronsUpDown className="mr-2 h-4 w-4" />Add Existing Users</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
-                </div></CardHeader><CardContent><Table><TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Email</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader><TableBody>{renderUserList()}</TableBody></Table></CardContent></Card></TabsContent>
+                </div></CardHeader><CardContent>{renderUserManagement()}</CardContent></Card></TabsContent>
             </Tabs>
         </div>
         <Dialog open={isShareDialogOpen} onOpenChange={setIsShareDialogOpen}><DialogContent className="sm:max-w-lg"><DialogHeader><DialogTitle>Share Newsletter: {sharingNewsletter?.title}</DialogTitle><DialogDescription>Select recipient groups or search all users.</DialogDescription></DialogHeader><Tabs defaultValue="my-subscribers" className="w-full pt-4"><TabsList className='grid w-full grid-cols-2'><TabsTrigger value="my-subscribers">Subscribers</TabsTrigger><TabsTrigger value="all-users">All Users</TabsTrigger></TabsList><TabsContent value="my-subscribers" className='mt-4'><ScrollArea className="h-72 w-full p-1"><div className="space-y-2 pr-4">{isLoadingAllCategories || isLoadingAllUsers ? (<Skeleton className="h-20 w-full" />) : allCategoriesError ? (<Alert variant="destructive"><AlertDescription>{allCategoriesError.message}</AlertDescription></Alert>) : !allSystemCategories || allSystemCategories.length === 0 ? (<p className="text-center text-sm text-muted-foreground py-4">No categories found in the system.</p>) : (allSystemCategories.map((cat) => { const categoryId = `cat-group-${cat.name.replace(/\s+/g, '-').toLowerCase()}`; const users = groupedUsersByCategory[cat.name] || []; const isSelected = users.length > 0 && users.every(u => selectedUserIds.includes(u._id)); return (<div key={cat._id} className="flex items-center space-x-2"><Checkbox id={categoryId} checked={isSelected} disabled={users.length === 0} onCheckedChange={(checked) => handleCategorySelection(users, Boolean(checked))}/><Label htmlFor={categoryId} className={cn("font-medium", users.length === 0 && "text-muted-foreground")}>{cat.name} ({users.length} users)</Label></div>); }))}</div></ScrollArea></TabsContent><TabsContent value="all-users" className='mt-4'><Input placeholder="Search all users..." value={shareSearchTerm} onChange={(e) => setShareSearchTerm(e.target.value)} className='mb-4'/><div className="flex items-center space-x-2 border-y py-2 px-1"><Checkbox id="select-all" checked={filteredAllUsers.length > 0 && filteredAllUsers.every(u => selectedUserIds.includes(u._id))} onCheckedChange={(checked) => handleSelectAllFiltered(Boolean(checked))}/><Label htmlFor="select-all">Select All ({filteredAllUsers.length})</Label></div><ScrollArea className="h-60 w-full pt-2">{isLoadingAllUsers ? <Skeleton className="h-20 w-full" /> : filteredAllUsers.length === 0 ? <p className="text-center text-sm text-muted-foreground py-4">No users found.</p> : filteredAllUsers.map(user => (<div key={user._id} className="flex items-center space-x-2 p-1"><Checkbox id={`all-user-${user._id}`} checked={selectedUserIds.includes(user._id)} onCheckedChange={(checked) => handleCategorySelection([user], Boolean(checked))}/><Label htmlFor={`all-user-${user._id}`} className="w-full">{user.name} <span className="text-muted-foreground">({user.email})</span></Label></div>))}</ScrollArea></TabsContent></Tabs><DialogFooter className='pt-4'><Button type="button" variant="secondary" onClick={() => setIsShareDialogOpen(false)}>Cancel</Button><Button type="submit" onClick={handleShareSubmit} disabled={selectedUserIds.length === 0 || shareNewsletterMutation.isPending}>{shareNewsletterMutation.isPending ? 'Sending...' : `Send to ${selectedUserIds.length} User(s)`}</Button></DialogFooter></DialogContent></Dialog>
@@ -211,10 +315,25 @@ const Dashboard = () => {
                 <DialogHeader>
                     <DialogTitle>Add Existing Users</DialogTitle>
                     <DialogDescription>
-                        Select users from the list to add to your managed category.
+                        Select a category and then choose users to add.
                     </DialogDescription>
                 </DialogHeader>
-                <div className="pt-4">
+                <div className="pt-4 space-y-4">
+                    <div>
+                        <Label htmlFor="category-select">Category</Label>
+                        <Select value={categoryToAdd} onValueChange={setCategoryToAdd}>
+                            <SelectTrigger id="category-select">
+                                <SelectValue placeholder="Select a category" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {categoryStats?.map(cat => (
+                                    <SelectItem key={cat.name} value={cat.name}>
+                                        {cat.name}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
                     <ScrollArea className="h-72 w-full rounded-md border p-2">
                         {isLoadingAllUsers ? (
                             <div className="space-y-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}</div>
@@ -244,7 +363,7 @@ const Dashboard = () => {
                 </div>
                 <DialogFooter>
                     <Button type="button" variant="secondary" onClick={() => setIsAddExistingUserDialogOpen(false)}>Cancel</Button>
-                    <Button type="submit" onClick={handleAddExistingUsersSubmit} disabled={usersToAdd.length === 0 || addUsersToCategoryMutation.isPending}>
+                    <Button type="submit" onClick={handleAddExistingUsersSubmit} disabled={usersToAdd.length === 0 || !categoryToAdd || addUsersToCategoryMutation.isPending}>
                         {addUsersToCategoryMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                         Add {usersToAdd.length > 0 ? usersToAdd.length : ''} User(s)
                     </Button>
