@@ -11,12 +11,10 @@ const genAI = process.env.GEMINI_API_KEY ? new GoogleGenerativeAI(process.env.GE
 
 // A map to create more specific, relevant search queries for NewsAPI.org
 const keywordMap = {
-    'java': `("Java" AND (framework OR library OR "best practices" OR performance OR "Oracle JDK" OR OpenJDK OR Spring OR Quarkus OR Micronaut OR Helidon)) NOT (coffee OR island OR travel OR Indonesia)`,
-    'information security': `("information security" OR cybersecurity OR "data breach" OR "vulnerability" OR "phishing" OR "malware" OR "zero day" OR "data privacy" OR "threat intelligence" OR "cloud security" OR "network security") NOT ("job posting" OR "hiring")`,
-    '.net': `(".NET" OR "ASP.NET" OR "C#" OR "dotnet") AND (Microsoft OR "Visual Studio" OR "Entity Framework" OR Blazor OR MAUI OR "software development")`,
-    'data science': `("data science" OR "machine learning" OR "artificial intelligence" OR "deep learning" OR "natural language processing" OR "computer vision" OR Pandas OR NumPy OR Scikit-learn OR TensorFlow OR PyTorch) NOT ("course" OR "bootcamp" OR "hiring")`,
-    'devops': `(DevOps OR "CI/CD" OR Jenkins OR GitLab OR Docker OR Kubernetes OR Terraform OR Ansible OR "site reliability engineering" OR SRE) AND (automation OR "cloud computing" OR infrastructure OR deployment OR monitoring)`,
-    'ci / cd pipelines': `("CI/CD" OR "Continuous Integration" OR "Continuous Deployment" OR "Continuous Delivery" OR Jenkins OR GitLab OR "GitHub Actions" OR "Azure DevOps" OR CircleCI OR "deployment pipeline") AND (automation OR testing OR security OR "best practices")`,
+    'java': `("Java" AND (framework OR library OR performance OR Spring OR Quarkus)) NOT (coffee OR island)`,
+    'information security': `(cybersecurity OR "data breach" OR vulnerability OR phishing OR malware) NOT (job OR hiring)`,
+    'data science': `("machine learning" OR "artificial intelligence" OR Pandas OR NumPy OR TensorFlow) NOT (course OR bootcamp)`,
+    'devops': `(DevOps OR "CI/CD" OR Docker OR Kubernetes) AND (automation OR cloud OR infrastructure)`,
 };
 
 // GET /api/news - Fetch relevant news from NewsAPI.org
