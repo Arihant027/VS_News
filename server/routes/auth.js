@@ -38,15 +38,15 @@ router.post('/signup', async (req, res) => {
   }
 });
 
-// --- Login Route ---
+// --- Login Route (Improved) ---
 router.post('/login', async (req, res) => {
     try {
-        const { email, password, userType } = req.body;
+        const { email, password } = req.body;
         
-        // Find user by email and the specific userType
-        const user = await User.findOne({ email, userType });
+        // Find user by email, regardless of their role
+        const user = await User.findOne({ email });
         if (!user) {
-            return res.status(401).json({ message: `No ${userType} account found with that email.` });
+            return res.status(401).json({ message: 'No Account Found!' });
         }
 
         const isMatch = await bcrypt.compare(password, user.password);

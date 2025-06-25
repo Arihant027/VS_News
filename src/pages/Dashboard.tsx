@@ -1,4 +1,3 @@
-// src/pages/Dashboard.tsx
 import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from "@/components/ui/button";
@@ -50,10 +49,11 @@ type AddUserFormData = z.infer<typeof addUserSchema>;
 const Dashboard = () => {
     const [searchParams, setSearchParams] = useSearchParams();
     const queryClient = useQueryClient();
-    const { token } = useAuth();
+    const { user, token } = useAuth();
     
     // --- State Management ---
-    const [activeTab, setActiveTab] = useState(searchParams.get('tab') || 'create-newsletter');
+    const [activeTab, setActiveTab] = useState<string | null>(searchParams.get('tab'));
+    const [currentDateTime, setCurrentDateTime] = useState(new Date());
     const [summarizedArticles, setSummarizedArticles] = useState<Record<string, string>>({});
     const [selectedRawArticles, setSelectedRawArticles] = useState<NewsArticle[]>([]);
     const [selectedCuratedArticles, setSelectedCuratedArticles] = useState<CuratedArticle[]>([]);
@@ -73,19 +73,22 @@ const Dashboard = () => {
     const [categoryToAdd, setCategoryToAdd] = useState<string>('');
 
     const addUserForm = useForm<AddUserFormData>({ resolver: zodResolver(addUserSchema), defaultValues: { name: "", email: "", categories: [] } });
-    
+
+    useEffect(() => {
+        const timer = setInterval(() => setCurrentDateTime(new Date()), 1000);
+        return () => clearInterval(timer);
+    }, []);
+
     useEffect(() => {
         const tabFromUrl = searchParams.get('tab');
-        if (tabFromUrl) {
-            setActiveTab(tabFromUrl);
-        }
+        setActiveTab(tabFromUrl);
     }, [searchParams]);
 
     const handleTabChange = (tab: string) => {
         setActiveTab(tab);
         setSearchParams({ tab });
     };
-
+    
     // --- Data Fetching ---
     const { data: newsletters, isLoading: isLoadingNewsletters, error: newslettersError } = useQuery<Newsletter[], Error>({ queryKey: ['myNewsletters'], queryFn: () => fetchWithToken('/newsletters', token), enabled: !!token });
     const { data: subscribers, isLoading: isLoadingSubscribers, error: subscribersError } = useQuery<Subscriber[], Error>({ queryKey: ['mySubscribers'], queryFn: () => fetchWithToken('/admins/my-subscribers', token), enabled: !!token });
@@ -101,7 +104,7 @@ const Dashboard = () => {
     const { data: allSystemCategories, isLoading: isLoadingAllCategories, error: allCategoriesError } = useQuery<SystemCategory[], Error>({ queryKey: ['allSystemCategories'], queryFn: () => fetchWithToken('/categories', token), enabled: isShareDialogOpen });
 
     // --- Mutations ---
-    const addUserMutation = useMutation({
+    const addUserMutation = useMutation<{ message: string; user: { _id: string; name: string; email: string; }; password_was: string }, Error, AddUserFormData>({
         mutationFn: (data: AddUserFormData) => fetchWithToken('/admins/add-user', token, { method: 'POST', body: JSON.stringify(data) }),
         onSuccess: (data) => {
             toast.success(data.message);
@@ -116,8 +119,8 @@ const Dashboard = () => {
         },
     });
 
-    const addUsersToCategoryMutation = useMutation({
-        mutationFn: (data: { userIds: string[], category: string }) => fetchWithToken('/admins/add-users-to-category', token, { method: 'PATCH', body: JSON.stringify(data) }),
+    const addUsersToCategoryMutation = useMutation<{ message: string }, Error, { userIds: string[], category: string }>({
+        mutationFn: (data) => fetchWithToken('/admins/add-users-to-category', token, { method: 'PATCH', body: JSON.stringify(data) }),
         onSuccess: (data) => {
             toast.success(data.message);
             setIsAddExistingUserDialogOpen(false);
@@ -129,8 +132,8 @@ const Dashboard = () => {
         }
     });
 
-    const removeUserFromCategoryMutation = useMutation({
-        mutationFn: ({ userId, categoryName }: { userId: string, categoryName: string }) =>
+    const removeUserFromCategoryMutation = useMutation<{ message: string }, Error, { userId: string, categoryName: string }>({
+        mutationFn: ({ userId, categoryName }) =>
             fetchWithToken('/admins/remove-user-from-category', token, {
                 method: 'PATCH',
                 body: JSON.stringify({ userId, categoryName }),
@@ -147,8 +150,8 @@ const Dashboard = () => {
         },
     });
     
-    const updateStatusMutation = useMutation({ mutationFn: ({ id, status }: { id: string; status: 'approved' | 'declined' }) => fetchWithToken(`/newsletters/${id}/status`, token, { method: 'PATCH', body: JSON.stringify({ status }) }), onSuccess: () => { toast.success("Newsletter status updated!"); queryClient.invalidateQueries({ queryKey: ['myNewsletters'] }); }, onError: (err: Error) => toast.error(err.message), });
-    const summarizeMutation = useMutation({
+    const updateStatusMutation = useMutation<Newsletter, Error, { id: string; status: 'approved' | 'declined' }>({ mutationFn: ({ id, status }) => fetchWithToken(`/newsletters/${id}/status`, token, { method: 'PATCH', body: JSON.stringify({ status }) }), onSuccess: () => { toast.success("Newsletter status updated!"); queryClient.invalidateQueries({ queryKey: ['myNewsletters'] }); }, onError: (err: Error) => toast.error(err.message), });
+    const summarizeMutation = useMutation<{ summary: string }, Error, NewsArticle>({
         mutationFn: (article: NewsArticle) => {
             const textToSummarize = `${article.title}. ${article.description || ''}`;
             return fetchWithToken('/news/summarize', token, {
@@ -156,17 +159,17 @@ const Dashboard = () => {
                 body: JSON.stringify({ textToSummarize })
             });
         },
-        onSuccess: (data: { summary: string }, variables) => {
+        onSuccess: (data, variables) => {
             setSummarizedArticles(prev => ({ ...prev, [variables.url]: data.summary }));
             toast.success("Summary generated!");
         },
         onError: (err: Error) => toast.error(err.message || "Failed to generate summary."),
     });
-    const saveMutation = useMutation({ mutationFn: (articles: NewsArticle[]) => fetchWithToken('/articles', token, { method: 'POST', body: JSON.stringify({ articles }) }), onSuccess: (data: { message: string }) => { toast.success(data.message); setSelectedRawArticles([]); queryClient.invalidateQueries({ queryKey: ['savedArticles', 'all'] }); setArticleFilter('all');}, onError: (err: Error) => toast.error(err.message), });
-    const generatePdfMutation = useMutation({ mutationFn: (data: { articles: CuratedArticle[], title: string, category: string }) => fetchBlobWithToken('/newsletters/generate-and-save', token, { method: 'POST', body: JSON.stringify(data), }), onSuccess: (blob) => { queryClient.invalidateQueries({ queryKey: ['myNewsletters'] }); setNewsletterTitle(""); const url = URL.createObjectURL(blob); window.open(url, '_blank'); toast.success("Newsletter created and opened successfully!"); setIsPdfTitleDialogOpen(false); }, onError: (err: Error) => { toast.error(err.message || "Failed to generate and save PDF."); }, });
+    const saveMutation = useMutation<{ message: string }, Error, NewsArticle[]>({ mutationFn: (articles) => fetchWithToken('/articles', token, { method: 'POST', body: JSON.stringify({ articles }) }), onSuccess: (data) => { toast.success(data.message); setSelectedRawArticles([]); queryClient.invalidateQueries({ queryKey: ['savedArticles', 'all'] }); setArticleFilter('all');}, onError: (err: Error) => toast.error(err.message), });
+    const generatePdfMutation = useMutation<Blob, Error, { articles: CuratedArticle[], title: string, category: string }>({ mutationFn: (data) => fetchBlobWithToken('/newsletters/generate-and-save', token, { method: 'POST', body: JSON.stringify(data), }), onSuccess: (blob) => { queryClient.invalidateQueries({ queryKey: ['myNewsletters'] }); setNewsletterTitle(""); const url = URL.createObjectURL(blob); window.open(url, '_blank'); toast.success("Newsletter created and opened successfully!"); setIsPdfTitleDialogOpen(false); }, onError: (err: Error) => { toast.error(err.message || "Failed to generate and save PDF."); }, });
     
-    const viewPdfMutation = useMutation({
-        mutationFn: (newsletterId: string) => fetchBlobWithToken(`/newsletters/${newsletterId}/download`, token),
+    const viewPdfMutation = useMutation<Blob, Error, string>({
+        mutationFn: (newsletterId) => fetchBlobWithToken(`/newsletters/${newsletterId}/download`, token),
         onSuccess: (blob) => {
             const url = URL.createObjectURL(blob);
             window.open(url, '_blank');
@@ -175,8 +178,8 @@ const Dashboard = () => {
         onError: (err: Error) => toast.error(err.message || "Failed to open PDF."),
     });
 
-    const downloadPdfMutation = useMutation({
-        mutationFn: ({ newsletterId, title }: { newsletterId: string, title: string }) => fetchBlobWithToken(`/newsletters/${newsletterId}/download`, token).then(blob => ({ blob, title })),
+    const downloadPdfMutation = useMutation<{ blob: Blob, title: string }, Error, { newsletterId: string, title: string }>({
+        mutationFn: ({ newsletterId, title }) => fetchBlobWithToken(`/newsletters/${newsletterId}/download`, token).then(blob => ({ blob, title })),
         onSuccess: ({ blob, title }) => {
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -191,12 +194,11 @@ const Dashboard = () => {
         onError: (err: Error) => toast.error(err.message || "Failed to download PDF."),
     });
 
-    const deleteNewsletterMutation = useMutation({ mutationFn: (newsletterId: string) => fetchWithToken(`/newsletters/${newsletterId}`, token, { method: 'DELETE' }), onSuccess: () => { toast.success("Newsletter deleted successfully!"); queryClient.invalidateQueries({ queryKey: ['myNewsletters'] }); }, onError: (err: Error) => toast.error(err.message), });
-    const deleteArticleMutation = useMutation({ mutationFn: (articleId: string) => fetchWithToken(`/articles/${articleId}`, token, { method: 'DELETE' }), onSuccess: () => { toast.success("Article deleted successfully!"); setSelectedCuratedArticles([]); queryClient.invalidateQueries({ queryKey: ['savedArticles', articleFilter] }); }, onError: (err: Error) => toast.error(err.message), });
-    const shareNewsletterMutation = useMutation({ mutationFn: (data: { newsletterId: string; userIds: string[] }) => fetchWithToken(`/newsletters/${data.newsletterId}/send`, token, { method: 'POST', body: JSON.stringify({ userIds: data.userIds }) }), onSuccess: (data) => { toast.success(data.message); queryClient.invalidateQueries({ queryKey: ['myNewsletters'] }); setIsShareDialogOpen(false); }, onError: (err: Error) => toast.error(err.message), });
-    
-    const shareUserDetailsMutation = useMutation({
-        mutationFn: (data: { email: string; name: string; password_was: string }) => 
+    const deleteNewsletterMutation = useMutation<{ message: string }, Error, string>({ mutationFn: (newsletterId) => fetchWithToken(`/newsletters/${newsletterId}`, token, { method: 'DELETE' }), onSuccess: () => { toast.success("Newsletter deleted successfully!"); queryClient.invalidateQueries({ queryKey: ['myNewsletters'] }); }, onError: (err: Error) => toast.error(err.message), });
+    const deleteArticleMutation = useMutation<{ message: string }, Error, string>({ mutationFn: (articleId) => fetchWithToken(`/articles/${articleId}`, token, { method: 'DELETE' }), onSuccess: () => { toast.success("Article deleted successfully!"); setSelectedCuratedArticles([]); queryClient.invalidateQueries({ queryKey: ['savedArticles', articleFilter] }); }, onError: (err: Error) => toast.error(err.message), });
+    const shareNewsletterMutation = useMutation<{ message: string }, Error, { newsletterId: string; userIds: string[] }>({ mutationFn: (data) => fetchWithToken(`/newsletters/${data.newsletterId}/send`, token, { method: 'POST', body: JSON.stringify({ userIds: data.userIds }) }), onSuccess: (data) => { toast.success(data.message); queryClient.invalidateQueries({ queryKey: ['myNewsletters'] }); setIsShareDialogOpen(false); }, onError: (err: Error) => toast.error(err.message), });
+    const shareUserDetailsMutation = useMutation<{ message: string }, Error, { email: string; name: string; password_was: string }>({
+        mutationFn: (data) => 
             fetchWithToken('/admins/share-new-user-details', token, {
                 method: 'POST',
                 body: JSON.stringify({ email: data.email, name: data.name, password: data.password_was }),
@@ -325,50 +327,72 @@ const Dashboard = () => {
       <div className="min-h-screen bg-background">
         <AdminHeader />
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-            <div className="mb-8"><h1 className="text-3xl font-bold tracking-tight">Category Admin Dashboard</h1><p className="text-muted-foreground mt-1">Manage your assigned categories, newsletters, and users.</p></div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-                <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-sm font-medium">Your Newsletters</CardTitle><ListTodo className="h-4 w-4 text-muted-foreground" /></CardHeader><CardContent><div className="text-2xl font-bold">{isLoadingNewsletters ? <Skeleton className='w-8 h-8' /> : newsletters?.length || 0}</div></CardContent></Card>
-                <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-sm font-medium">Your Subscribers</CardTitle><Users className="h-4 w-4 text-muted-foreground" /></CardHeader><CardContent><div className="text-2xl font-bold">{isLoadingSubscribers ? <Skeleton className='w-8 h-8' /> : subscribers?.length || 0}</div></CardContent></Card>
-            </div>
-            <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
+            <Tabs value={activeTab || ''} onValueChange={handleTabChange} className="w-full">
                 <div className="flex justify-center"><TabsList><TabsTrigger value="create-newsletter">Create Newsletter</TabsTrigger><TabsTrigger value="generated-newsletters">Newsletters History</TabsTrigger><TabsTrigger value="categories">My Categories</TabsTrigger><TabsTrigger value="users">Users</TabsTrigger></TabsList></div>
-                <TabsContent value="create-newsletter" className="mt-6">
-                    <Card>
+                
+                {!activeTab ? (
+                    <Card className="mt-6 text-center">
                         <CardHeader>
-                            <div className="flex justify-between items-center">
-                                <div>
-                                    <CardTitle>Create a Newsletter</CardTitle>
-                                    <CardDescription>Select articles below, then click 'Generate PDF' to give your newsletter a title and create it.</CardDescription>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <Select value={articleFilter} onValueChange={setArticleFilter}>
-                                        <SelectTrigger className="w-[180px]"><SelectValue placeholder="Filter by date" /></SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="all">All Time</SelectItem>
-                                            <SelectItem value="day">Past 24 hours</SelectItem>
-                                            <SelectItem value="week">Past Week</SelectItem>
-                                            <SelectItem value="month">Past Month</SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                    <Button variant="outline" onClick={() => setIsCurationDialogOpen(true)}><Newspaper className='w-4 h-4 mr-2'/>Curate News & Articles</Button>
-                                    <Button onClick={() => setIsPdfTitleDialogOpen(true)} disabled={selectedCuratedArticles.length === 0}><FileSignature className='w-4 h-4 mr-2'/>Generate PDF</Button>
-                                </div>
-                            </div>
+                            <CardTitle className="text-3xl">Welcome, {user?.name}!</CardTitle>
+                            <CardDescription>
+                                {currentDateTime.toLocaleDateString(undefined, {
+                                    weekday: 'long',
+                                    year: 'numeric',
+                                    month: 'long',
+                                    day: 'numeric',
+                                })}
+                            </CardDescription>
                         </CardHeader>
-                        <CardContent className="space-y-2">{renderNewsletterCreator()}</CardContent>
+                        <CardContent>
+                            <p className="text-5xl font-semibold text-primary">
+                                {currentDateTime.toLocaleTimeString()}
+                            </p>
+                            <p className="text-muted-foreground mt-2">
+                                Select a tab above to get started.
+                            </p>
+                        </CardContent>
                     </Card>
-                </TabsContent>
-                <TabsContent value="generated-newsletters" className="mt-6"><Card><CardHeader><div className='flex items-center justify-between'><div><CardTitle>Generated Newsletters</CardTitle><CardDescription>View, approve, or decline previously generated newsletters.</CardDescription></div><Popover><PopoverTrigger asChild><Button id="date" variant={"outline"} className={cn("w-[240px] justify-start text-left font-normal",!filterDate && "text-muted-foreground")}><CalendarIcon className="mr-2 h-4 w-4" />{filterDate ? format(filterDate, "PPP") : <span>Filter by date</span>}</Button></PopoverTrigger><PopoverContent className="w-auto p-0" align="end"><Calendar initialFocus mode="single" selected={filterDate} onSelect={setFilterDate} /></PopoverContent></Popover></div></CardHeader><CardContent className="space-y-4">{renderNewsletterList()}</CardContent></Card></TabsContent>
-                <TabsContent value="categories" className="mt-6"><div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">{renderMyCategories()}</div></TabsContent>
-                <TabsContent value="users" className="mt-6"><Card><CardHeader><div className='flex items-center justify-between'><div><CardTitle className="flex items-center gap-2"><Users className='w-5 h-5' /> Subscribed Users</CardTitle><CardDescription>Users subscribed to your assigned categories.</CardDescription></div>
-                <DropdownMenu><DropdownMenuTrigger asChild><Button><Plus className='w-4 h-4 mr-2' />Add User</Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onSelect={() => setIsAddUserDialogOpen(true)}><UserPlus className="mr-2 h-4 w-4" />Create New User</DropdownMenuItem><DropdownMenuItem onSelect={handleOpenAddExistingDialog}><ChevronsUpDown className="mr-2 h-4 w-4" />Add Existing Users</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
-                </div></CardHeader><CardContent>{renderUserManagement()}</CardContent></Card></TabsContent>
+                ) : (
+                    <>
+                        <TabsContent value="create-newsletter" className="mt-6">
+                            <Card>
+                                <CardHeader>
+                                    <div className="flex justify-between items-center">
+                                        <div>
+                                            <CardTitle>Create a Newsletter</CardTitle>
+                                            <CardDescription>Select articles below, then click 'Generate PDF' to give your newsletter a title and create it.</CardDescription>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <Select value={articleFilter} onValueChange={setArticleFilter}>
+                                                <SelectTrigger className="w-[180px]"><SelectValue placeholder="Filter by date" /></SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="all">All Time</SelectItem>
+                                                    <SelectItem value="day">Past 24 hours</SelectItem>
+                                                    <SelectItem value="week">Past Week</SelectItem>
+                                                    <SelectItem value="month">Past Month</SelectItem>
+                                                </SelectContent>
+                                            </Select>
+                                            <Button variant="outline" onClick={() => setIsCurationDialogOpen(true)}><Newspaper className='w-4 h-4 mr-2'/>Curate News & Articles</Button>
+                                            <Button onClick={() => setIsPdfTitleDialogOpen(true)} disabled={selectedCuratedArticles.length === 0}><FileSignature className='w-4 h-4 mr-2'/>Generate PDF</Button>
+                                        </div>
+                                    </div>
+                                </CardHeader>
+                                <CardContent className="space-y-2">{renderNewsletterCreator()}</CardContent>
+                            </Card>
+                        </TabsContent>
+                        <TabsContent value="generated-newsletters" className="mt-6"><Card><CardHeader><div className='flex items-center justify-between'><div><CardTitle>Generated Newsletters</CardTitle><CardDescription>View, approve, or decline previously generated newsletters.</CardDescription></div><Popover><PopoverTrigger asChild><Button id="date" variant={"outline"} className={cn("w-[240px] justify-start text-left font-normal",!filterDate && "text-muted-foreground")}><CalendarIcon className="mr-2 h-4 w-4" />{filterDate ? format(filterDate, "PPP") : <span>Filter by date</span>}</Button></PopoverTrigger><PopoverContent className="w-auto p-0" align="end"><Calendar initialFocus mode="single" selected={filterDate} onSelect={setFilterDate} /></PopoverContent></Popover></div></CardHeader><CardContent className="space-y-4">{renderNewsletterList()}</CardContent></Card></TabsContent>
+                        <TabsContent value="categories" className="mt-6"><div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">{renderMyCategories()}</div></TabsContent>
+                        <TabsContent value="users" className="mt-6"><Card><CardHeader><div className='flex items-center justify-between'><div><CardTitle className="flex items-center gap-2"><Users className='w-5 h-5' /> Subscribed Users</CardTitle><CardDescription>Users subscribed to your assigned categories.</CardDescription></div>
+                        <DropdownMenu><DropdownMenuTrigger asChild><Button><Plus className='w-4 h-4 mr-2' />Add User</Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onSelect={() => setIsAddUserDialogOpen(true)}><UserPlus className="mr-2 h-4 w-4" />Create New User</DropdownMenuItem><DropdownMenuItem onSelect={handleOpenAddExistingDialog}><ChevronsUpDown className="mr-2 h-4 w-4" />Add Existing Users</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
+                        </div></CardHeader><CardContent>{renderUserManagement()}</CardContent></Card></TabsContent>
+                    </>
+                )}
             </Tabs>
         </div>
         <Dialog open={isShareDialogOpen} onOpenChange={setIsShareDialogOpen}><DialogContent className="sm:max-w-lg"><DialogHeader><DialogTitle>Share Newsletter: {sharingNewsletter?.title}</DialogTitle><DialogDescription>Select recipient groups or search all users.</DialogDescription></DialogHeader><Tabs defaultValue="my-subscribers" className="w-full pt-4"><TabsList className='grid w-full grid-cols-2'><TabsTrigger value="my-subscribers">Subscribers</TabsTrigger><TabsTrigger value="all-users">All Users</TabsTrigger></TabsList><TabsContent value="my-subscribers" className='mt-4'><ScrollArea className="h-72 w-full p-1"><div className="space-y-2 pr-4">{isLoadingAllCategories || isLoadingAllUsers ? (<Skeleton className="h-20 w-full" />) : allCategoriesError ? (<Alert variant="destructive"><AlertDescription>{allCategoriesError.message}</AlertDescription></Alert>) : !allSystemCategories || allSystemCategories.length === 0 ? (<p className="text-center text-sm text-muted-foreground py-4">No categories found in the system.</p>) : (allSystemCategories.map((cat) => { const categoryId = `cat-group-${cat.name.replace(/\s+/g, '-').toLowerCase()}`; const users = groupedUsersByCategory[cat.name] || []; const isSelected = users.length > 0 && users.every(u => selectedUserIds.includes(u._id)); return (<div key={cat._id} className="flex items-center space-x-2"><Checkbox id={categoryId} checked={isSelected} disabled={users.length === 0} onCheckedChange={(checked) => handleCategorySelection(users, Boolean(checked))}/><Label htmlFor={categoryId} className={cn("font-medium", users.length === 0 && "text-muted-foreground")}>{cat.name} ({users.length} users)</Label></div>); }))}</div></ScrollArea></TabsContent><TabsContent value="all-users" className='mt-4'><Input placeholder="Search all users..." value={shareSearchTerm} onChange={(e) => setShareSearchTerm(e.target.value)} className='mb-4'/><div className="flex items-center space-x-2 border-y py-2 px-1"><Checkbox id="select-all" checked={filteredAllUsers.length > 0 && filteredAllUsers.every(u => selectedUserIds.includes(u._id))} onCheckedChange={(checked) => handleSelectAllFiltered(Boolean(checked))}/><Label htmlFor="select-all">Select All ({filteredAllUsers.length})</Label></div><ScrollArea className="h-60 w-full pt-2">{isLoadingAllUsers ? <Skeleton className="h-20 w-full" /> : filteredAllUsers.length === 0 ? <p className="text-center text-sm text-muted-foreground py-4">No users found.</p> : filteredAllUsers.map(user => (<div key={user._id} className="flex items-center space-x-2 p-1"><Checkbox id={`all-user-${user._id}`} checked={selectedUserIds.includes(user._id)} onCheckedChange={(checked) => handleCategorySelection([user], Boolean(checked))}/><Label htmlFor={`all-user-${user._id}`} className="w-full">{user.name} <span className="text-muted-foreground">({user.email})</span></Label></div>))}</ScrollArea></TabsContent></Tabs><DialogFooter className='pt-4'><Button type="button" variant="secondary" onClick={() => setIsShareDialogOpen(false)}>Cancel</Button><Button type="submit" onClick={handleShareSubmit} disabled={selectedUserIds.length === 0 || shareNewsletterMutation.isPending}>{shareNewsletterMutation.isPending ? 'Sending...' : `Send to ${selectedUserIds.length} User(s)`}</Button></DialogFooter></DialogContent></Dialog>
         <Dialog open={isCurationDialogOpen} onOpenChange={setIsCurationDialogOpen}><DialogContent className="sm:max-w-4xl"><DialogHeader><DialogTitle>News Curation</DialogTitle><DialogDescription>Review, summarize, and select news to save for later.</DialogDescription></DialogHeader><div className="space-y-4 max-h-[70vh] overflow-y-auto p-1 pr-4">{renderNewsArticleList()}</div><DialogFooter className="sm:justify-between items-center"><p className="text-sm text-muted-foreground">Selected Articles: <span className="font-bold">{selectedRawArticles.length}</span></p><div className="flex items-center gap-2"><Button type="button" variant="secondary" onClick={() => setIsCurationDialogOpen(false)}>Close</Button><Button onClick={handleSave} disabled={selectedRawArticles.length === 0 || saveMutation.isPending}><Save className='w-4 h-4 mr-2'/>{saveMutation.isPending ? "Saving..." : `Save Selected`}</Button></div></DialogFooter></DialogContent></Dialog>
         <Dialog open={isAddUserDialogOpen} onOpenChange={setIsAddUserDialogOpen}><DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle>Add a New User</DialogTitle><DialogDescription>A default password will be generated.</DialogDescription></DialogHeader><form onSubmit={addUserForm.handleSubmit((data) => addUserMutation.mutate(data))} className="space-y-4 pt-4"><div><Label htmlFor="name">Full Name</Label><Input id="name" {...addUserForm.register("name")} />{addUserForm.formState.errors.name && <p className="text-sm text-destructive mt-1">{addUserForm.formState.errors.name.message}</p>}</div><div><Label htmlFor="email">Email Address</Label><Input id="email" type="email" {...addUserForm.register("email")} />{addUserForm.formState.errors.email && <p className="text-sm text-destructive mt-1">{addUserForm.formState.errors.email.message}</p>}</div><div><Label>Assign to Categories</Label><div className="space-y-2 rounded-md border p-4 max-h-40 overflow-y-auto"><Controller name="categories" control={addUserForm.control} render={({ field }) => (<>{isLoadingCategoryStats ? <Skeleton className='h-5 w-20'/> : categoryStats?.map((cat) => (<div key={cat.name} className="flex items-center space-x-2"><Checkbox id={`cat-${cat.name}`} checked={field.value?.includes(cat.name)} onCheckedChange={(checked) => { const current = field.value || []; const newCategories = checked ? [...current, cat.name] : current.filter(name => name !== cat.name); field.onChange(newCategories);}}/><label htmlFor={`cat-${cat.name}`} className="text-sm font-medium">{cat.name}</label></div>))}</>)}/></div></div><DialogFooter><Button type="button" variant="secondary" onClick={() => setIsAddUserDialogOpen(false)}>Cancel</Button><Button type="submit" disabled={addUserMutation.isPending}>{addUserMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin"/> : "Create User"}</Button></DialogFooter></form></DialogContent></Dialog>
-        <Dialog open={!!createdUserInfo} onOpenChange={() => setCreatedUserInfo(null)}><DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle className='flex items-center gap-2'><UserPlus className='w-5 h-5 text-green-600'/>User Created</DialogTitle><DialogDescription>Please share these credentials with the user, or send them via email.</DialogDescription></DialogHeader><div className="space-y-4 py-4"><p><strong>Name:</strong> {createdUserInfo?.name}</p><p><strong>Email:</strong> {createdUserInfo?.email}</p><div className='flex items-center gap-2'><p><strong>Password:</strong> <span className="font-mono bg-gray-100 p-1 rounded">{createdUserInfo?.password_was}</span></p><Button variant='outline' size='icon' className='h-7 w-7' onClick={() => {navigator.clipboard.writeText(createdUserInfo?.password_was || ''); toast.success("Password copied!");}}><Copy className='w-4 h-4'/></Button></div></div><DialogFooter className="justify-between"><Button variant="secondary" onClick={() => shareUserDetailsMutation.mutate(createdUserInfo!)} disabled={shareUserDetailsMutation.isPending}>{shareUserDetailsMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Mail className="mr-2 h-4 w-4" />}Share Details via Email</Button><Button onClick={() => setCreatedUserInfo(null)}>Close</Button></DialogFooter></DialogContent></Dialog>
+        <Dialog open={!!createdUserInfo} onOpenChange={() => setCreatedUserInfo(null)}><DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle className='flex items-center gap-2'><UserPlus className='w-5 h-5 text-green-600'/>User Created</DialogTitle><DialogDescription>Please share these credentials with the user, or send them via email.</DialogDescription></DialogHeader><div className="space-y-4 py-4"><p><strong>Name:</strong> {createdUserInfo?.name}</p><p><strong>Email:</strong> {createdUserInfo?.email}</p><div className='flex items-center gap-2'><p><strong>Password:</strong> <span className="font-mono bg-gray-100 p-1 rounded">{createdUserInfo?.password_was}</span></p><Button variant='outline' size='icon' className='h-7 w-7' onClick={() => {navigator.clipboard.writeText(createdUserInfo?.password_was || ''); toast.success("Password copied!");}}><Copy className='w-4 h-4'/></Button></div></div><DialogFooter className="justify-between"><Button variant="secondary" onClick={() => { if(createdUserInfo) shareUserDetailsMutation.mutate(createdUserInfo)}} disabled={shareUserDetailsMutation.isPending}>{shareUserDetailsMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Mail className="mr-2 h-4 w-4" />}Share Details via Email</Button><Button onClick={() => setCreatedUserInfo(null)}>Close</Button></DialogFooter></DialogContent></Dialog>
         {/* --- DIALOG FOR ADDING EXISTING USERS --- */}
         <Dialog open={isAddExistingUserDialogOpen} onOpenChange={setIsAddExistingUserDialogOpen}>
             <DialogContent className="sm:max-w-md">

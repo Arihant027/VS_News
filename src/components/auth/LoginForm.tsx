@@ -3,11 +3,11 @@ import { useState } from 'react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Mail, Lock, User, Loader2, AlertCircle } from 'lucide-react';
+import { Mail, Lock, Loader2, AlertCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useAuth } from '@/context/AuthContext';
-import { ModeToggle } from '@/components/mode-toggle'; // <-- Add this import
+import { ModeToggle } from '@/components/mode-toggle';
 
 export const LoginForm = () => {
   const navigate = useNavigate();
@@ -21,38 +21,34 @@ export const LoginForm = () => {
     e.preventDefault();
     setLoading(true);
     setError(null);
-    const rolesToAttempt: ('user' | 'admin' | 'superadmin')[] = ['user', 'admin', 'superadmin'];
-
-    for (const userType of rolesToAttempt) {
-      try {
-        const response = await fetch('/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password, userType }),
-        });
-        const data = await response.json();
-        if (response.ok) {
-          login(data.user, data.token);
-          const targetPath =
-            data.user.userType === 'superadmin' ? '/super-admin' :
-            data.user.userType === 'admin' ? '/dashboard' : '/user-dashboard';
-          navigate(targetPath);
-          return;
-        } else if (userType === 'superadmin') {
-          throw new Error(data.message || 'Invalid credentials.');
-        }
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred.';
-        setError(errorMessage);
-        break;
+    
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }), // No longer sending userType
+      });
+      const data = await response.json();
+      if (response.ok) {
+        login(data.user, data.token);
+        const targetPath =
+          data.user.userType === 'superadmin' ? '/super-admin' :
+          data.user.userType === 'admin' ? '/dashboard' : '/user-dashboard';
+        navigate(targetPath);
+      } else {
+        throw new Error(data.message || 'Invalid credentials.');
       }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred.';
+      setError(errorMessage);
+    } finally {
+        setLoading(false);
     }
-    setLoading(false);
   };
 
   return (
     <div className="w-full lg:grid lg:min-h-screen lg:grid-cols-2 xl:min-h-screen relative">
-      <div className="absolute top-4 right-4"> {/* <-- Add this block for the toggle */}
+      <div className="absolute top-4 right-4">
           <ModeToggle />
       </div>
       <div className="flex items-center justify-center py-12">
