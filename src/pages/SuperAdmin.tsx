@@ -29,7 +29,7 @@ import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { format } from 'date-fns';
-import { Plus, Edit, Trash2, AlertCircle, User as UserIcon, LayoutGrid, Users, Loader2, Copy, UserPlus, Mail } from 'lucide-react';
+import { Plus, Edit, Trash2, AlertCircle, User as UserIcon, LayoutGrid, Users, Loader2, Copy, UserPlus, Mail, Share2 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AdminHeader } from '@/components/AdminHeader';
 import { fetchWithToken } from '@/lib/api';
@@ -91,12 +91,8 @@ const SuperAdmin = () => {
   const editSubscriptionsForm = useForm<EditSubscriptionsFormData>({ resolver: zodResolver(editSubscriptionsSchema) });
 
   useEffect(() => {
-    const timer = setInterval(() => {
-        setCurrentDateTime(new Date());
-    }, 1000);
-    return () => {
-        clearInterval(timer);
-    };
+    const timer = setInterval(() => setCurrentDateTime(new Date()), 1000);
+    return () => clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -133,17 +129,14 @@ const SuperAdmin = () => {
   const addUserMutation = useMutation<{ message: string; user: { _id: string; name: string; email: string; }; password_was: string }, Error, AddUserFormData>({ mutationFn: (data: AddUserFormData) => fetchWithToken('/admins/super-add-user', token, { method: 'POST', body: JSON.stringify(data) }), onSuccess: (data) => { toast.success(data.message); queryClient.invalidateQueries({ queryKey: ['allRegularUsers'] }); setIsAddUserDialogOpen(false); setCreatedUserInfo({ ...data.user, password_was: data.password }); addUserForm.reset(); }, onError: (err: Error) => toast.error(err.message), });
   const updateSubscriptionsMutation = useMutation<RegularUser, Error, { userId: string, categories: string[] }>({ mutationFn: (data: { userId: string, categories: string[] }) => fetchWithToken(`/admins/user/${data.userId}/subscriptions`, token, { method: 'PATCH', body: JSON.stringify({ categories: data.categories }) }), onSuccess: () => { toast.success("User subscriptions updated successfully!"); queryClient.invalidateQueries({ queryKey: ['allRegularUsers'] }); setEditingUser(null); }, onError: (err: Error) => toast.error(err.message || "Failed to update subscriptions.") });
   const shareUserDetailsMutation = useMutation<{ message: string }, Error, { email: string; name: string; password_was: string }>({
-    mutationFn: (data: { email: string; name: string; password_was: string }) => 
-        fetchWithToken('/admins/share-new-user-details', token, {
-            method: 'POST',
-            body: JSON.stringify({ email: data.email, name: data.name, password: data.password_was }),
-        }),
-    onSuccess: (data) => {
-        toast.success(data.message);
-    },
-    onError: (err: Error) => {
-        toast.error(err.message || "Failed to share details.");
-    }
+    mutationFn: (data) => fetchWithToken('/admins/share-new-user-details', token, { method: 'POST', body: JSON.stringify({ email: data.email, name: data.name, password: data.password_was }) }),
+    onSuccess: (data) => { toast.success(data.message); },
+    onError: (err: Error) => { toast.error(err.message || "Failed to share details."); }
+  });
+  const resetPasswordMutation = useMutation<{ message: string }, Error, string>({
+    mutationFn: (userId: string) => fetchWithToken(`/admins/user/${userId}/reset-password`, token, { method: 'POST' }),
+    onSuccess: (data) => { toast.success(data.message); },
+    onError: (err: Error) => { toast.error(err.message || "Failed to reset password."); }
   });
 
   const onSubscriptionSubmit = (data: EditSubscriptionsFormData) => {
@@ -161,13 +154,10 @@ const SuperAdmin = () => {
 
   const filteredUsers = useMemo(() => {
     if (!allRegularUsers) return [];
-
     let users = allRegularUsers;
-
     if (categoryFilter !== 'all') {
         users = users.filter(user => user.categories.includes(categoryFilter));
     }
-
     if (searchTerm) {
         const lowercasedSearchTerm = searchTerm.toLowerCase();
         users = users.filter(user =>
@@ -175,7 +165,6 @@ const SuperAdmin = () => {
             user.email.toLowerCase().includes(lowercasedSearchTerm)
         );
     }
-
     return users;
   }, [allRegularUsers, categoryFilter, searchTerm]);
 
@@ -272,6 +261,25 @@ const SuperAdmin = () => {
         <TableCell>{format(new Date(user.createdAt), 'PP')}</TableCell>
         <TableCell className="text-right flex items-center justify-end gap-2">
             <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setEditingUser(user)}><Edit className="h-4 w-4" /></Button>
+            <AlertDialog>
+                <AlertDialogTrigger asChild>
+                    <Button variant="outline" size="icon" className="h-8 w-8"><Share2 className="h-4 w-4" /></Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Reset and Share Password?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            This will generate a new temporary password for <span className="font-semibold">{user.name}</span> and email it to them. The user's current password will no longer work. Are you sure you want to proceed?
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction onClick={() => resetPasswordMutation.mutate(user._id)} disabled={resetPasswordMutation.isPending && resetPasswordMutation.variables === user._id}>
+                            {resetPasswordMutation.isPending && resetPasswordMutation.variables === user._id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "Yes, Reset and Share"}
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
             <AlertDialog><AlertDialogTrigger asChild><Button variant="destructive" size="icon" className="h-8 w-8"><Trash2 className="h-4 w-4" /></Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle><AlertDialogDescription>This will permanently delete the user <span className="font-semibold">{user.name}</span> and all of their data. This action cannot be undone.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => deleteUserMutation.mutate(user._id)} disabled={deleteUserMutation.isPending}>{deleteUserMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "Delete User"}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
         </TableCell>
       </TableRow>
@@ -409,7 +417,7 @@ const SuperAdmin = () => {
             </div>
           </div>
           <DialogFooter className="justify-between">
-            <Button variant="secondary" onClick={() => shareUserDetailsMutation.mutate(createdUserInfo!)} disabled={shareUserDetailsMutation.isPending}>
+            <Button variant="secondary" onClick={() => { if(createdUserInfo) shareUserDetailsMutation.mutate(createdUserInfo)}} disabled={shareUserDetailsMutation.isPending}>
                 {shareUserDetailsMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Mail className="mr-2 h-4 w-4" />}
                 Share Details via Email
             </Button>

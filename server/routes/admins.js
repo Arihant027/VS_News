@@ -9,12 +9,18 @@ import sgMail from '@sendgrid/mail';
 
 const router = Router();
 
-// GET all admins and superadmins
+// GET all admins and superadmins (SUPERADMIN ONLY)
 router.get('/', auth, async (req, res) => {
-  try {
-    const admins = await User.find({ userType: { $in: ['admin', 'superadmin'] } });
-    res.json(admins);
-  } catch (err) { res.status(500).json({ message: 'Server error.', error: err.message }); }
+    try {
+        const requester = await User.findById(req.user);
+        if (!requester || requester.userType !== 'superadmin') {
+            return res.status(403).json({ message: 'Access denied. Superadmin permission required.' });
+        }
+        const admins = await User.find({ userType: { $in: ['admin', 'superadmin'] } });
+        res.json(admins);
+    } catch (err) {
+        res.status(500).json({ message: 'Server error.', error: err.message });
+    }
 });
 
 // GET stats for the logged-in admin's managed categories
@@ -78,7 +84,7 @@ router.post('/add-user', auth, async (req, res) => {
             email,
             password: passwordHash,
             userType: 'user',
-            categories: categories || [], // CORRECTED: Use categories from request body
+            categories: categories || [],
             status: 'Active',
         });
 
@@ -104,7 +110,6 @@ router.patch('/remove-user-from-category', auth, async (req, res) => {
         
         const admin = await User.findById(req.user);
 
-        // Authorization check
         if (!admin.categories.includes(categoryName)) {
             return res.status(403).json({ message: 'You are not authorized to manage this category.' });
         }
@@ -126,7 +131,6 @@ router.patch('/remove-user-from-category', auth, async (req, res) => {
     }
 });
 
-// FIX: This route now correctly handles adding users to a specific category
 router.patch('/add-users-to-category', auth, async (req, res) => {
     try {
         const { userIds, category } = req.body;
@@ -287,6 +291,57 @@ router.get('/all-regular-users', auth, async (req, res) => {
     res.status(500).json({ message: 'Server error fetching users.', error: err.message });
   }
 });
+
+router.post('/user/:id/reset-password', auth, async (req, res) => {
+    const requester = await User.findById(req.user);
+    if (!requester || requester.userType !== 'superadmin') {
+        return res.status(403).json({ message: 'Access denied. Superadmin permission required.' });
+    }
+
+    if (!process.env.SENDGRID_API_KEY || !process.env.FROM_EMAIL) {
+        return res.status(500).json({ message: 'Email service is not configured on the server.' });
+    }
+    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+
+    try {
+        const userToUpdate = await User.findById(req.params.id);
+        if (!userToUpdate) {
+            return res.status(404).json({ message: 'User not found.' });
+        }
+
+        const newPassword = crypto.randomBytes(8).toString('hex');
+        const salt = await bcrypt.genSalt();
+        userToUpdate.password = await bcrypt.hash(newPassword, salt);
+
+        await userToUpdate.save();
+
+        const msg = {
+            to: userToUpdate.email,
+            from: { name: 'NewsLetterAI Admin', email: process.env.FROM_EMAIL },
+            subject: 'Your Password has been Reset for NewsLetterAI',
+            html: `
+                <p>Hello ${userToUpdate.name},</p>
+                <p>Your password has been reset by a Super Admin.</p>
+                <p>Here are your new login details:</p>
+                <ul>
+                    <li><strong>Username/Email:</strong> ${userToUpdate.email}</li>
+                    <li><strong>New Temporary Password:</strong> ${newPassword}</li>
+                </ul>
+                <p>Please log in and change your password in the settings as soon as possible.</p>
+                <p>Thank you,</p>
+                <p>The NewsLetterAI Team</p>
+            `,
+        };
+
+        await sgMail.send(msg);
+
+        res.json({ message: `A new password has been sent to ${userToUpdate.email}.` });
+    } catch (error) {
+        console.error('Error resetting user password:', error);
+        res.status(500).json({ message: 'Failed to reset password due to a server error.' });
+    }
+});
+
 
 router.delete('/user/:id', auth, async (req, res) => {
   try {
