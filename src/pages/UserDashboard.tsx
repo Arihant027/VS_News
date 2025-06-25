@@ -21,6 +21,8 @@ import { Calendar } from '@/components/ui/calendar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Mail, Loader2, Calendar as CalendarIcon, AlertCircle, Bookmark, Newspaper, Send, Download, FileText } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
 // --- Data Types ---
 interface ReceivedNewsletter {
@@ -35,20 +37,31 @@ interface Category {
 }
 interface UserProfile {
   name: string;
+  email: string;
+  categories: string[];
+}
+
+// This should match the structure of the `user` object in AuthContext
+interface User {
+  id: string;
+  name: string;
+  email: string;
+  userType: 'user' | 'admin' | 'superadmin';
   categories: string[];
 }
 
 const preferencesSchema = z.object({
+  email: z.string().email("Invalid email address."),
   categories: z.array(z.string()).default([]),
 });
 type PreferencesFormData = z.infer<typeof preferencesSchema>;
 
 const fetchAllCategories = (token: string | null): Promise<Category[]> => fetchWithToken('/categories', token);
 const fetchUserProfile = (token: string | null): Promise<UserProfile> => fetchWithToken('/users/me', token);
-const updateUserCategories = (token: string | null, categories: string[]): Promise<UserProfile> => fetchWithToken('/users/me/categories', token, { method: 'PATCH', body: JSON.stringify({ categories }) });
+const updateUserProfile = (token: string | null, data: Partial<PreferencesFormData>): Promise<{ user: User; token: string }> => fetchWithToken('/users/me/profile', token, { method: 'PATCH', body: JSON.stringify(data) });
 
 const UserDashboard = () => {
-    const { token } = useAuth();
+    const { user, token, login } = useAuth();
     const queryClient = useQueryClient();
     const [searchParams, setSearchParams] = useSearchParams();
 
@@ -57,6 +70,10 @@ const UserDashboard = () => {
     
     const { control, handleSubmit, reset, formState: { isSubmitting, isDirty } } = useForm<PreferencesFormData>({
         resolver: zodResolver(preferencesSchema),
+        defaultValues: {
+            email: user?.email || '',
+            categories: user?.categories || []
+        }
     });
 
     const { data: allCategories, isLoading: isLoadingCategories, error: categoriesError } = useQuery({ 
@@ -77,26 +94,17 @@ const UserDashboard = () => {
         refetchOnWindowFocus: true,
     });
 
-    const updatePreferencesMutation = useMutation({
-        mutationFn: (categories: string[]) => updateUserCategories(token, categories),
+    const updateProfileMutation = useMutation({
+        mutationFn: (data: PreferencesFormData) => updateUserProfile(token, data),
         onSuccess: (data) => { 
-            toast.success("Preferences saved successfully!"); 
+            toast.success("Profile updated successfully!"); 
+            login(data.user, data.token);
             queryClient.invalidateQueries({ queryKey: ['userProfile'] });
-            reset({ categories: data.categories || [] });
+            reset({ email: data.user.email, categories: data.user.categories || [] });
         },
         onError: (err: Error) => { toast.error(err.message || "Failed to save preferences."); }
     });
     
-    const viewPdfMutation = useMutation({
-        mutationFn: (newsletterId: string) => fetchBlobWithToken(`/newsletters/${newsletterId}/download`, token),
-        onSuccess: (blob) => {
-            const url = URL.createObjectURL(blob);
-            window.open(url, '_blank');
-            toast.success("PDF opened successfully!");
-        },
-        onError: (err: Error) => toast.error(err.message || "Failed to open PDF."),
-    });
-
     const downloadPdfMutation = useMutation({
         mutationFn: ({ newsletterId, title }: { newsletterId: string, title: string }) => fetchBlobWithToken(`/newsletters/${newsletterId}/download`, token).then(blob => ({ blob, title })),
         onSuccess: ({ blob, title }) => {
@@ -111,6 +119,16 @@ const UserDashboard = () => {
             toast.success("PDF downloaded successfully!");
         },
         onError: (err: Error) => toast.error(err.message || "Failed to download PDF."),
+    });
+
+    const viewPdfMutation = useMutation({
+        mutationFn: (newsletterId: string) => fetchBlobWithToken(`/newsletters/${newsletterId}/download`, token),
+        onSuccess: (blob) => {
+            const url = URL.createObjectURL(blob);
+            window.open(url, '_blank');
+            toast.success("PDF opened successfully!");
+        },
+        onError: (err: Error) => toast.error(err.message || "Failed to open PDF."),
     });
 
     const sendToEmailMutation = useMutation({
@@ -134,7 +152,7 @@ const UserDashboard = () => {
 
     useEffect(() => {
         if (userProfile) {
-            reset({ categories: userProfile.categories || [] });
+            reset({ email: userProfile.email, categories: userProfile.categories || [] });
         }
     }, [userProfile, reset]);
     
@@ -151,7 +169,7 @@ const UserDashboard = () => {
     };
 
     const onSubmitPreferences = (data: PreferencesFormData) => {
-        updatePreferencesMutation.mutate(data.categories);
+        updateProfileMutation.mutate(data);
     };
 
     const filteredNewsletters = useMemo(() => {
@@ -168,21 +186,6 @@ const UserDashboard = () => {
             <AdminHeader />
 
             <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-                <div className="mb-8">
-                    <h1 className="text-3xl font-bold tracking-tight">My Dashboard</h1>
-                    <p className="text-muted-foreground mt-1">View your newsletters and manage your subscriptions.</p>
-                </div>
-
-                <Card className="mb-8">
-                    <CardHeader className="flex flex-row items-center justify-between pb-2">
-                        <CardTitle className="text-sm font-medium">Newsletters Received</CardTitle>
-                        <Mail className="h-4 w-4 text-muted-foreground" />
-                    </CardHeader>
-                    <CardContent>
-                        {isLoadingNewsletters ? <Skeleton className='h-8 w-1/3' /> : <div className="text-2xl font-bold">{receivedNewsletters?.length || 0}</div>}
-                    </CardContent>
-                </Card>
-
                 <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
                     <div className="flex justify-center">
                         <TabsList>
@@ -263,42 +266,55 @@ const UserDashboard = () => {
                             <Card>
                                 <CardHeader>
                                   <CardTitle className="flex items-center gap-2"><Bookmark />Manage My Subscriptions</CardTitle>
-                                  <CardDescription>Select the topics you're interested in to receive tailored newsletters.</CardDescription>
+                                  <CardDescription>Update your email or select topics to receive tailored newsletters.</CardDescription>
                                 </CardHeader>
-                                <CardContent>
-                                    {isLoadingCategories ? (
-                                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                                            {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}
-                                        </div>
-                                    ) : categoriesError ? (
-                                        <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertDescription>{categoriesError.message}</AlertDescription></Alert>
-                                    ) : (!allCategories || allCategories.length === 0) ? (
-                                        <p className="text-center text-muted-foreground py-8">No categories have been added to the system yet.</p>
-                                    ) : (
+                                <CardContent className="space-y-6">
+                                    <div>
+                                        <Label htmlFor="email" className="text-base font-semibold">Email Address</Label>
+                                        <p className="text-sm text-muted-foreground mb-2">You can update the email address where you receive newsletters.</p>
                                         <Controller
-                                            name="categories"
+                                            name="email"
                                             control={control}
-                                            render={({ field }) => (
-                                                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                                                    {allCategories?.map((category) => (
-                                                        <div key={category._id} className="flex items-center space-x-2 p-2 rounded-md hover:bg-accent">
-                                                            <Checkbox
-                                                                id={category._id}
-                                                                checked={field.value?.includes(category.name)}
-                                                                onCheckedChange={(checked) => {
-                                                                    const newValue = checked
-                                                                        ? [...(field.value || []), category.name]
-                                                                        : (field.value || []).filter((value) => value !== category.name);
-                                                                    field.onChange(newValue);
-                                                                }}
-                                                            />
-                                                            <label htmlFor={category._id} className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">{category.name}</label>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            )}
+                                            render={({ field }) => <Input id="email" type="email" {...field} className="max-w-sm"/>}
                                         />
-                                    )}
+                                    </div>
+                                    <div>
+                                        <Label className="text-base font-semibold">Categories</Label>
+                                        <p className="text-sm text-muted-foreground mb-2">Choose the topics that interest you.</p>
+                                        {isLoadingCategories ? (
+                                            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                                                {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}
+                                            </div>
+                                        ) : categoriesError ? (
+                                            <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertDescription>{categoriesError.message}</AlertDescription></Alert>
+                                        ) : (!allCategories || allCategories.length === 0) ? (
+                                            <p className="text-center text-muted-foreground py-8">No categories have been added to the system yet.</p>
+                                        ) : (
+                                            <Controller
+                                                name="categories"
+                                                control={control}
+                                                render={({ field }) => (
+                                                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                                                        {allCategories?.map((category) => (
+                                                            <div key={category._id} className="flex items-center space-x-2 p-2 rounded-md hover:bg-accent">
+                                                                <Checkbox
+                                                                    id={category._id}
+                                                                    checked={field.value?.includes(category.name)}
+                                                                    onCheckedChange={(checked) => {
+                                                                        const newValue = checked
+                                                                            ? [...(field.value || []), category.name]
+                                                                            : (field.value || []).filter((value) => value !== category.name);
+                                                                        field.onChange(newValue);
+                                                                    }}
+                                                                />
+                                                                <label htmlFor={category._id} className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">{category.name}</label>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            />
+                                        )}
+                                    </div>
                                 </CardContent>
                                 <CardContent>
                                     <Button type="submit" disabled={isSubmitting || !isDirty}>

@@ -1,11 +1,12 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
-import mongoose from 'mongoose'; // Ensure mongoose is imported
+import mongoose from 'mongoose';
 import auth from '../middleware/auth.js';
 import User from '../models/user.model.js';
 import Newsletter from '../models/newsletter.model.js';
 import Notification from '../models/notification.model.js';
 import sgMail from '@sendgrid/mail';
+import jwt from 'jsonwebtoken';
 
 const router = Router();
 
@@ -19,27 +20,46 @@ router.get('/me', auth, async (req, res) => {
     }
 });
 
-// PATCH - Update User Profile
+// PATCH - Update User Profile (Email, Name, Password)
 router.patch('/me/profile', auth, async (req, res) => {
     try {
-        const { name, password } = req.body;
+        const { name, email, password } = req.body;
         const user = await User.findById(req.user);
         if (!user) {
             return res.status(404).json({ message: 'User not found.' });
         }
+
+        if (email && email !== user.email) {
+            const existingUser = await User.findOne({ email });
+            if (existingUser) {
+                return res.status(400).json({ message: 'This email is already in use.' });
+            }
+            user.email = email;
+        }
+
         if (name) {
             user.name = name;
         }
+
         if (password) {
             const salt = await bcrypt.genSalt();
             user.password = await bcrypt.hash(password, salt);
         }
+
         const updatedUser = await user.save();
+        
+        // Re-issue token with potentially new email
+        const token = jwt.sign({ id: updatedUser._id }, process.env.JWT_SECRET, { expiresIn: '1d' });
+
         res.json({
-            id: updatedUser._id,
-            name: updatedUser.name,
-            email: updatedUser.email,
-            userType: updatedUser.userType,
+            token,
+            user: {
+                id: updatedUser._id,
+                name: updatedUser.name,
+                email: updatedUser.email,
+                userType: updatedUser.userType,
+                categories: updatedUser.categories
+            },
         });
     } catch (err) {
         res.status(500).json({ message: 'Server error updating profile.', error: err.message });
@@ -64,17 +84,15 @@ router.patch('/me/categories', auth, async (req, res) => {
 // GET user's received newsletters
 router.get('/my-newsletters', auth, async (req, res) => {
     try {
-        // **FIX**: Explicitly cast the user ID string from the token to a mongoose ObjectId
-        // to ensure the database query finds the correct documents.
         const userId = new mongoose.Types.ObjectId(req.user);
 
         const receivedNewsletters = await Newsletter.find({ recipients: userId })
             .sort({ createdAt: -1 })
-            .select('title category createdAt'); // _id is included by default
+            .select('title category createdAt');
 
         res.json(receivedNewsletters);
     } catch (err) {
-        console.error("Error fetching user newsletters:", err); // Added logging for easier debugging
+        console.error("Error fetching user newsletters:", err);
         res.status(500).json({ error: 'Server error while fetching newsletters.' });
     }
 });
