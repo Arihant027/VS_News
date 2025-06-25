@@ -1,3 +1,4 @@
+// src/components/AdminHeader.tsx
 import { useState, useEffect } from 'react';
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -54,7 +55,8 @@ export const AdminHeader = () => {
       queryKey: ['notifications'],
       queryFn: () => fetchWithToken('/notifications', token),
       enabled: !!token,
-      refetchInterval: 60000,
+      refetchInterval: 15000, // Check for new notifications every 15 seconds
+      refetchOnWindowFocus: true, // Refresh when the tab is focused
   });
 
   const unreadCount = notifications?.filter(n => !n.isRead).length ?? 0;

@@ -70,6 +70,8 @@ const UserDashboard = () => {
         queryKey: ['myReceivedNewsletters'],
         queryFn: () => fetchWithToken('/users/my-newsletters', token),
         enabled: !!token,
+        refetchInterval: 15000, // Refetch every 15 seconds
+        refetchOnWindowFocus: true, // Refetch when the window gains focus
     });
 
     const updatePreferencesMutation = useMutation({
