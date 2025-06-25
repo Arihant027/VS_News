@@ -5,6 +5,7 @@ import User from '../models/user.model.js';
 import Category from '../models/category.model.js';
 import Newsletter from '../models/newsletter.model.js';
 import auth from '../middleware/auth.js';
+import sgMail from '@sendgrid/mail';
 
 const router = Router();
 
@@ -225,6 +226,49 @@ router.delete('/:id', auth, async (req, res) => {
     await User.findByIdAndDelete(req.params.id);
     res.json({ message: 'Admin deleted successfully.' });
   } catch (err) { res.status(500).json({ message: 'Server error.', error: err.message }); }
+});
+
+router.post('/share-new-user-details', auth, async (req, res) => {
+    if (!process.env.SENDGRID_API_KEY || !process.env.FROM_EMAIL) {
+        return res.status(500).json({ message: 'Email service is not configured on the server.' });
+    }
+    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+
+    try {
+        const { email, name, password } = req.body;
+        if (!email || !name || !password) {
+            return res.status(400).json({ message: 'User details (email, name, password) are required.' });
+        }
+
+        const msg = {
+            to: email,
+            from: { name: 'NewsLetterAI Admin', email: process.env.FROM_EMAIL },
+            subject: 'Your New Account Credentials for NewsLetterAI',
+            html: `
+                <p>Hello ${name},</p>
+                <p>An account has been created for you on NewsLetterAI.</p>
+                <p>Here are your login details:</p>
+                <ul>
+                    <li><strong>Username/Email:</strong> ${email}</li>
+                    <li><strong>Temporary Password:</strong> ${password}</li>
+                </ul>
+                <p>Please log in and change your password in the settings.</p>
+                <p>Thank you,</p>
+                <p>The NewsLetterAI Team</p>
+            `,
+        };
+
+        await sgMail.send(msg);
+
+        res.json({ message: `Credentials successfully sent to ${email}.` });
+
+    } catch (error) {
+        console.error('Error sending new user credentials:', error);
+        if (error.response) {
+            console.error(error.response.body);
+        }
+        res.status(500).json({ message: 'Failed to send credentials email due to a server error.' });
+    }
 });
 
 // --- Superadmin specific routes from here ---
