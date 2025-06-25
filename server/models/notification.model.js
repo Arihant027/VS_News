@@ -6,6 +6,7 @@ const notificationSchema = new Schema({
   newsletter: { type: Schema.Types.ObjectId, ref: 'Newsletter', required: true },
   message: { type: String, required: true },
   isRead: { type: Boolean, default: false, index: true },
+  actionUrl: { type: String },
 }, {
   timestamps: true,
 });

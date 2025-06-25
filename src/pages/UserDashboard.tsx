@@ -19,7 +19,8 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Mail, FileText, Loader2, Calendar as CalendarIcon, AlertCircle, Bookmark, Newspaper, Send } from 'lucide-react';
+import { Mail, Loader2, Calendar as CalendarIcon, AlertCircle, Bookmark, Newspaper, Send, Download, FileText } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 
 // --- Data Types ---
 interface ReceivedNewsletter {
@@ -49,8 +50,10 @@ const updateUserCategories = (token: string | null, categories: string[]): Promi
 const UserDashboard = () => {
     const { token } = useAuth();
     const queryClient = useQueryClient();
+    const [searchParams, setSearchParams] = useSearchParams();
 
     const [filterDate, setFilterDate] = useState<Date | undefined>(undefined);
+    const [activeTab, setActiveTab] = useState(searchParams.get('tab') || 'newsletters');
     
     const { control, handleSubmit, reset, formState: { isSubmitting, isDirty } } = useForm<PreferencesFormData>({
         resolver: zodResolver(preferencesSchema),
@@ -70,8 +73,8 @@ const UserDashboard = () => {
         queryKey: ['myReceivedNewsletters'],
         queryFn: () => fetchWithToken('/users/my-newsletters', token),
         enabled: !!token,
-        refetchInterval: 15000, // Refetch every 15 seconds
-        refetchOnWindowFocus: true, // Refetch when the window gains focus
+        refetchInterval: 15000,
+        refetchOnWindowFocus: true,
     });
 
     const updatePreferencesMutation = useMutation({
@@ -83,12 +86,29 @@ const UserDashboard = () => {
         },
         onError: (err: Error) => { toast.error(err.message || "Failed to save preferences."); }
     });
-    const downloadPdfMutation = useMutation({
+    
+    const viewPdfMutation = useMutation({
         mutationFn: (newsletterId: string) => fetchBlobWithToken(`/newsletters/${newsletterId}/download`, token),
         onSuccess: (blob) => {
             const url = URL.createObjectURL(blob);
             window.open(url, '_blank');
             toast.success("PDF opened successfully!");
+        },
+        onError: (err: Error) => toast.error(err.message || "Failed to open PDF."),
+    });
+
+    const downloadPdfMutation = useMutation({
+        mutationFn: ({ newsletterId, title }: { newsletterId: string, title: string }) => fetchBlobWithToken(`/newsletters/${newsletterId}/download`, token).then(blob => ({ blob, title })),
+        onSuccess: ({ blob, title }) => {
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${title.replace(/\s/g, '_')}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.URL.revokeObjectURL(url);
+            toast.success("PDF downloaded successfully!");
         },
         onError: (err: Error) => toast.error(err.message || "Failed to download PDF."),
     });
@@ -105,7 +125,6 @@ const UserDashboard = () => {
         onSuccess: (data: { message: string }) => {
             toast.success(data.message || "Newsletter sent to your email!");
             queryClient.invalidateQueries({ queryKey: ['notifications'] });
-            // **FIX**: Invalidate the newsletters query to update the list on the dashboard
             queryClient.invalidateQueries({ queryKey: ['myReceivedNewsletters'] });
         },
         onError: (err: Error) => {
@@ -118,6 +137,18 @@ const UserDashboard = () => {
             reset({ categories: userProfile.categories || [] });
         }
     }, [userProfile, reset]);
+    
+    useEffect(() => {
+        const tabFromUrl = searchParams.get('tab');
+        if (tabFromUrl) {
+            setActiveTab(tabFromUrl);
+        }
+    }, [searchParams]);
+
+    const handleTabChange = (tab: string) => {
+        setActiveTab(tab);
+        setSearchParams({ tab });
+    };
 
     const onSubmitPreferences = (data: PreferencesFormData) => {
         updatePreferencesMutation.mutate(data.categories);
@@ -152,7 +183,7 @@ const UserDashboard = () => {
                     </CardContent>
                 </Card>
 
-                <Tabs defaultValue="newsletters" className="w-full">
+                <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
                     <div className="flex justify-center">
                         <TabsList>
                             <TabsTrigger value="newsletters">My Newsletters</TabsTrigger>
@@ -198,12 +229,19 @@ const UserDashboard = () => {
                                                 </p>
                                             </div>
                                             <div className="flex items-center gap-2">
-                                                <Button variant="outline" onClick={() => downloadPdfMutation.mutate(newsletter._id)} disabled={downloadPdfMutation.isPending && downloadPdfMutation.variables === newsletter._id}>
-                                                    {downloadPdfMutation.isPending && downloadPdfMutation.variables === newsletter._id 
+                                                <Button variant="outline" onClick={() => viewPdfMutation.mutate(newsletter._id)} disabled={viewPdfMutation.isPending && viewPdfMutation.variables === newsletter._id}>
+                                                    {viewPdfMutation.isPending && viewPdfMutation.variables === newsletter._id 
                                                         ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                                                         : <FileText className="w-4 h-4 mr-2" />
                                                     }
                                                     View PDF
+                                                </Button>
+                                                <Button variant="outline" onClick={() => downloadPdfMutation.mutate({ newsletterId: newsletter._id, title: newsletter.title })} disabled={downloadPdfMutation.isPending && downloadPdfMutation.variables?.newsletterId === newsletter._id}>
+                                                    {downloadPdfMutation.isPending && downloadPdfMutation.variables?.newsletterId === newsletter._id 
+                                                        ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                                        : <Download className="w-4 h-4 mr-2" />
+                                                    }
+                                                    Download PDF
                                                 </Button>
                                                 <Button variant="outline" onClick={() => sendToEmailMutation.mutate(newsletter._id)} disabled={sendToEmailMutation.isPending && sendToEmailMutation.variables === newsletter._id}>
                                                     {sendToEmailMutation.isPending && sendToEmailMutation.variables === newsletter._id

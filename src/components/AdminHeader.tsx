@@ -19,7 +19,6 @@ import { toast } from 'sonner';
 import { formatDistanceToNow } from 'date-fns';
 import { ModeToggle } from './mode-toggle';
 import { cn } from '@/lib/utils';
-// **FIX**: Added TooltipTrigger to the import list
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'; 
 
 const settingsSchema = z.object({
@@ -38,6 +37,7 @@ interface Notification {
     message: string;
     createdAt: string;
     isRead: boolean;
+    actionUrl?: string;
 }
 
 export const AdminHeader = () => {
@@ -55,8 +55,8 @@ export const AdminHeader = () => {
       queryKey: ['notifications'],
       queryFn: () => fetchWithToken('/notifications', token),
       enabled: !!token,
-      refetchInterval: 15000, // Check for new notifications every 15 seconds
-      refetchOnWindowFocus: true, // Refresh when the tab is focused
+      refetchInterval: 15000,
+      refetchOnWindowFocus: true,
   });
 
   const unreadCount = notifications?.filter(n => !n.isRead).length ?? 0;
@@ -158,7 +158,7 @@ export const AdminHeader = () => {
                     <DropdownMenuGroup>
                         {notifications && notifications.length > 0 ? (
                             notifications.map(n => (
-                                <DropdownMenuItem key={n._id} onSelect={(e) => e.preventDefault()} className="flex items-center justify-between gap-2 whitespace-normal">
+                                <DropdownMenuItem key={n._id} onSelect={(e) => { e.preventDefault(); if (n.actionUrl) { navigate(n.actionUrl); } }} className="flex items-center justify-between gap-2 whitespace-normal cursor-pointer">
                                    <div className='flex flex-col items-start'>
                                         <p className={cn("text-sm", !n.isRead && "font-semibold")}>{n.message}</p>
                                         <p className="text-xs text-muted-foreground">{formatDistanceToNow(new Date(n.createdAt), { addSuffix: true })}</p>

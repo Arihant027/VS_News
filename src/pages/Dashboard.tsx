@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { FileText, Clock, CheckCircle, Users, ListTodo, Newspaper, AlertCircle, XCircle, ExternalLink, Sparkles, Loader2, Save, FileSignature, Trash2, Share2, Calendar as CalendarIcon, Plus, Copy, UserPlus, ChevronsUpDown, CheckCheck } from 'lucide-react';
+import { Clock, CheckCircle, Users, ListTodo, Newspaper, AlertCircle, XCircle, ExternalLink, Sparkles, Loader2, Save, FileSignature, Trash2, Share2, Calendar as CalendarIcon, Plus, Copy, UserPlus, ChevronsUpDown, CheckCheck, Download, FileText } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { AdminHeader } from '@/components/AdminHeader';
 import { useAuth } from '@/context/AuthContext';
@@ -29,6 +29,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { cn } from '@/lib/utils';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { useSearchParams } from 'react-router-dom';
 
 // --- Data Types ---
 interface Newsletter { _id: string; title: string; category: string; status: 'Not Sent' | 'pending' | 'approved' | 'declined' | 'sent'; articles: { _id: string }[]; createdAt: string; }
@@ -47,10 +48,12 @@ const addUserSchema = z.object({
 type AddUserFormData = z.infer<typeof addUserSchema>;
 
 const Dashboard = () => {
+    const [searchParams, setSearchParams] = useSearchParams();
     const queryClient = useQueryClient();
     const { token } = useAuth();
     
     // --- State Management ---
+    const [activeTab, setActiveTab] = useState(searchParams.get('tab') || 'create-newsletter');
     const [summarizedArticles, setSummarizedArticles] = useState<Record<string, string>>({});
     const [selectedRawArticles, setSelectedRawArticles] = useState<NewsArticle[]>([]);
     const [selectedCuratedArticles, setSelectedCuratedArticles] = useState<CuratedArticle[]>([]);
@@ -70,6 +73,18 @@ const Dashboard = () => {
     const [categoryToAdd, setCategoryToAdd] = useState<string>('');
 
     const addUserForm = useForm<AddUserFormData>({ resolver: zodResolver(addUserSchema), defaultValues: { name: "", email: "", categories: [] } });
+
+    useEffect(() => {
+        const tabFromUrl = searchParams.get('tab');
+        if (tabFromUrl) {
+            setActiveTab(tabFromUrl);
+        }
+    }, [searchParams]);
+
+    const handleTabChange = (tab: string) => {
+        setActiveTab(tab);
+        setSearchParams({ tab });
+    };
     
     // --- Data Fetching ---
     const { data: newsletters, isLoading: isLoadingNewsletters, error: newslettersError } = useQuery<Newsletter[], Error>({ queryKey: ['myNewsletters'], queryFn: () => fetchWithToken('/newsletters', token), enabled: !!token });
@@ -78,7 +93,7 @@ const Dashboard = () => {
         queryKey: ['myCategoryStats'],
         queryFn: () => fetchWithToken('/admins/my-categories-stats', token),
         enabled: !!token,
-        refetchInterval: 20000, // Refetch every 20 seconds
+        refetchInterval: 20000,
     });
     const { data: newsData, isLoading: isLoadingNews, error: newsError } = useQuery<{ articles: NewsArticle[] }, Error>({ queryKey: ['newsArticles'], queryFn: () => fetchWithToken('/news', token), enabled: !!token });
     const { data: allUsers, isLoading: isLoadingAllUsers } = useQuery<Subscriber[], Error>({ queryKey: ['allUsers'], queryFn: () => fetchWithToken('/admins/all-users', token), enabled: !!token && (isShareDialogOpen || isAddExistingUserDialogOpen) });
@@ -149,7 +164,33 @@ const Dashboard = () => {
     });
     const saveMutation = useMutation({ mutationFn: (articles: NewsArticle[]) => fetchWithToken('/articles', token, { method: 'POST', body: JSON.stringify({ articles }) }), onSuccess: (data: { message: string }) => { toast.success(data.message); setSelectedRawArticles([]); queryClient.invalidateQueries({ queryKey: ['savedArticles', 'all'] }); setArticleFilter('all');}, onError: (err: Error) => toast.error(err.message), });
     const generatePdfMutation = useMutation({ mutationFn: (data: { articles: CuratedArticle[], title: string, category: string }) => fetchBlobWithToken('/newsletters/generate-and-save', token, { method: 'POST', body: JSON.stringify(data), }), onSuccess: (blob) => { queryClient.invalidateQueries({ queryKey: ['myNewsletters'] }); setNewsletterTitle(""); const url = URL.createObjectURL(blob); window.open(url, '_blank'); toast.success("Newsletter created and opened successfully!"); setIsPdfTitleDialogOpen(false); }, onError: (err: Error) => { toast.error(err.message || "Failed to generate and save PDF."); }, });
-    const downloadPdfMutation = useMutation({ mutationFn: (newsletterId: string) => fetchBlobWithToken(`/newsletters/${newsletterId}/download`, token), onSuccess: (blob) => { const url = URL.createObjectURL(blob); window.open(url, '_blank'); toast.success("PDF opened successfully!"); }, onError: (err: Error) => { toast.error(err.message || "Failed to download PDF."); }, });
+    
+    const viewPdfMutation = useMutation({
+        mutationFn: (newsletterId: string) => fetchBlobWithToken(`/newsletters/${newsletterId}/download`, token),
+        onSuccess: (blob) => {
+            const url = URL.createObjectURL(blob);
+            window.open(url, '_blank');
+            toast.success("PDF opened successfully!");
+        },
+        onError: (err: Error) => toast.error(err.message || "Failed to open PDF."),
+    });
+
+    const downloadPdfMutation = useMutation({
+        mutationFn: ({ newsletterId, title }: { newsletterId: string, title: string }) => fetchBlobWithToken(`/newsletters/${newsletterId}/download`, token).then(blob => ({ blob, title })),
+        onSuccess: ({ blob, title }) => {
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${title.replace(/\s/g, '_')}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.URL.revokeObjectURL(url);
+            toast.success("PDF downloaded successfully!");
+        },
+        onError: (err: Error) => toast.error(err.message || "Failed to download PDF."),
+    });
+
     const deleteNewsletterMutation = useMutation({ mutationFn: (newsletterId: string) => fetchWithToken(`/newsletters/${newsletterId}`, token, { method: 'DELETE' }), onSuccess: () => { toast.success("Newsletter deleted successfully!"); queryClient.invalidateQueries({ queryKey: ['myNewsletters'] }); }, onError: (err: Error) => toast.error(err.message), });
     const deleteArticleMutation = useMutation({ mutationFn: (articleId: string) => fetchWithToken(`/articles/${articleId}`, token, { method: 'DELETE' }), onSuccess: () => { toast.success("Article deleted successfully!"); setSelectedCuratedArticles([]); queryClient.invalidateQueries({ queryKey: ['savedArticles', articleFilter] }); }, onError: (err: Error) => toast.error(err.message), });
     const shareNewsletterMutation = useMutation({ mutationFn: (data: { newsletterId: string; userIds: string[] }) => fetchWithToken(`/newsletters/${data.newsletterId}/send`, token, { method: 'POST', body: JSON.stringify({ userIds: data.userIds }) }), onSuccess: (data) => { toast.success(data.message); queryClient.invalidateQueries({ queryKey: ['myNewsletters'] }); setIsShareDialogOpen(false); }, onError: (err: Error) => toast.error(err.message), });
@@ -196,10 +237,10 @@ const Dashboard = () => {
             case 'pending': return { color: 'bg-yellow-100 text-yellow-800', icon: <Clock className="w-4 h-4" />, text: 'Pending' };
             case 'declined': return { color: 'bg-red-100 text-red-800', icon: <XCircle className="w-4 h-4" />, text: 'Declined' };
             case 'Not Sent':
-            default: return { color: 'bg-gray-100 text-gray-800', icon: <FileText className="w-4 h-4" />, text: 'Not Sent' };
+            default: return { color: 'bg-gray-100 text-gray-800', icon: <Newspaper className="w-4 h-4" />, text: 'Not Sent' };
         }
     };
-    const renderNewsletterList = () => { if (isLoadingNewsletters) return Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-24 w-full" />); if (newslettersError) return <Alert variant="destructive"><AlertDescription>{newslettersError.message}</AlertDescription></Alert>; if (!filteredNewsletters || filteredNewsletters.length === 0) { return <p className="text-center text-muted-foreground py-8">{filterDate ? "No newsletters found for this date." : "No newsletters have been generated yet."}</p>; } return filteredNewsletters.map((newsletter) => { const statusProps = getStatusProps(newsletter.status); return (<div key={newsletter._id} className="flex items-center justify-between p-4 border rounded-lg hover:bg-accent"><div className="flex-1"><div className="flex items-center gap-3 mb-2"><h3 className="font-semibold">{newsletter.title}</h3><Badge variant="outline">{newsletter.category}</Badge><Badge className={statusProps.color}>{statusProps.icon}<span className="ml-1">{statusProps.text}</span></Badge></div></div><div className="flex items-center gap-2 ml-4"><Button size="sm" variant="outline" onClick={() => downloadPdfMutation.mutate(newsletter._id)} disabled={downloadPdfMutation.isPending && downloadPdfMutation.variables === newsletter._id}>{downloadPdfMutation.isPending && downloadPdfMutation.variables === newsletter._id ? <Loader2 className="w-4 h-4 animate-spin"/> : 'View PDF'}</Button><Button size="icon" variant="secondary" className="h-9 w-9" onClick={() => handleOpenShareDialog(newsletter)}><Share2 className="h-4 w-4" /></Button><Button size="icon" variant="destructive" className="h-9 w-9" onClick={() => deleteNewsletterMutation.mutate(newsletter._id)} disabled={deleteNewsletterMutation.isPending && deleteNewsletterMutation.variables === newsletter._id}>{deleteNewsletterMutation.isPending && deleteNewsletterMutation.variables === newsletter._id ? <Loader2 className="h-4 h-4 animate-spin" /> : <Trash2 className="h-4 h-4" />}</Button>{newsletter.status === 'pending' && (<><Button size="sm" variant="destructive" onClick={() => updateStatusMutation.mutate({ id: newsletter._id, status: 'declined' })} disabled={updateStatusMutation.isPending}><XCircle className="w-4 h-4 mr-1"/>Decline</Button><Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => updateStatusMutation.mutate({ id: newsletter._id, status: 'approved' })} disabled={updateStatusMutation.isPending}><CheckCircle className="w-4 h-4 mr-1"/>Approve</Button></>)}</div></div>); }); };
+    const renderNewsletterList = () => { if (isLoadingNewsletters) return Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-24 w-full" />); if (newslettersError) return <Alert variant="destructive"><AlertDescription>{newslettersError.message}</AlertDescription></Alert>; if (!filteredNewsletters || filteredNewsletters.length === 0) { return <p className="text-center text-muted-foreground py-8">{filterDate ? "No newsletters found for this date." : "No newsletters have been generated yet."}</p>; } return filteredNewsletters.map((newsletter) => { const statusProps = getStatusProps(newsletter.status); return (<div key={newsletter._id} className="flex items-center justify-between p-4 border rounded-lg hover:bg-accent"><div className="flex-1"><div className="flex items-center gap-3 mb-2"><h3 className="font-semibold">{newsletter.title}</h3><Badge variant="outline">{newsletter.category}</Badge><Badge className={statusProps.color}>{statusProps.icon}<span className="ml-1">{statusProps.text}</span></Badge></div></div><div className="flex items-center gap-2 ml-4"><Button size="sm" variant="outline" onClick={() => viewPdfMutation.mutate(newsletter._id)} disabled={viewPdfMutation.isPending && viewPdfMutation.variables === newsletter._id}>{viewPdfMutation.isPending && viewPdfMutation.variables === newsletter._id ? <Loader2 className="w-4 h-4 mr-2 animate-spin"/> : <FileText className="w-4 h-4 mr-2" />}View PDF</Button><Button size="sm" variant="outline" onClick={() => downloadPdfMutation.mutate({ newsletterId: newsletter._id, title: newsletter.title })} disabled={downloadPdfMutation.isPending && downloadPdfMutation.variables?.newsletterId === newsletter._id}>{downloadPdfMutation.isPending && downloadPdfMutation.variables?.newsletterId === newsletter._id ? <Loader2 className="w-4 h-4 mr-2 animate-spin"/> : <Download className="w-4 h-4 mr-2" />}Download PDF</Button><Button size="icon" variant="secondary" className="h-9 w-9" onClick={() => handleOpenShareDialog(newsletter)}><Share2 className="h-4 h-4" /></Button><Button size="icon" variant="destructive" className="h-9 w-9" onClick={() => deleteNewsletterMutation.mutate(newsletter._id)} disabled={deleteNewsletterMutation.isPending && deleteNewsletterMutation.variables === newsletter._id}>{deleteNewsletterMutation.isPending && deleteNewsletterMutation.variables === newsletter._id ? <Loader2 className="h-4 h-4 animate-spin" /> : <Trash2 className="h-4 h-4" />}</Button>{newsletter.status === 'pending' && (<><Button size="sm" variant="destructive" onClick={() => updateStatusMutation.mutate({ id: newsletter._id, status: 'declined' })} disabled={updateStatusMutation.isPending}><XCircle className="w-4 h-4 mr-1"/>Decline</Button><Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => updateStatusMutation.mutate({ id: newsletter._id, status: 'approved' })} disabled={updateStatusMutation.isPending}><CheckCircle className="w-4 h-4 mr-1"/>Approve</Button></>)}</div></div>); }); };
     const renderNewsArticleList = () => { if (isLoadingNews) return Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-40 w-full rounded-lg" />); if (newsError) return <Alert variant="destructive"><AlertDescription>{newsError.message}</AlertDescription></Alert>; if (!newsData || newsData.articles.length === 0) return <div className="text-center py-10"><p className="text-muted-foreground">No recent news articles found.</p></div>; return newsData.articles.map((article) => (<Card key={article.url} className="overflow-hidden"><div className="p-6 flex flex-col justify-between flex-1"><div><Badge variant="secondary" className="mb-2">{article.source.name}</Badge><CardTitle className="text-lg mb-2">{article.title}</CardTitle><CardDescription>{article.description}</CardDescription>{summarizedArticles[article.url] && (<div className='mt-4'><Label className='text-xs font-semibold text-primary'>AI Summary</Label><Textarea readOnly value={summarizedArticles[article.url]} className="mt-1 bg-primary/10" rows={5} /></div>)}</div><div className='flex items-center justify-between mt-4'><div className="flex items-center gap-2"><Button variant="outline" size="sm" asChild><a href={article.url} target="_blank" rel="noopener noreferrer">Read More <ExternalLink className="w-3 h-3 ml-2"/></a></Button><Button variant="secondary" size="sm" onClick={() => summarizeMutation.mutate(article)} disabled={summarizeMutation.isPending}>{summarizeMutation.isPending && summarizeMutation.variables?.url === article.url ? <Loader2 className="w-4 h-4 animate-spin"/> : <Sparkles className="w-4 h-4" />}<span className='ml-2'>Summarize</span></Button></div><div className="flex items-center space-x-2"><Checkbox id={article.url} checked={selectedRawArticles.some(sa => sa.url === article.url)} onCheckedChange={(checked) => handleSelectRawArticle(article, Boolean(checked))}/><label htmlFor={article.url} className="text-sm font-medium">Select</label></div></div></div></Card>)); };
     const renderMyCategories = () => { if (isLoadingCategoryStats) return Array.from({ length: 2 }).map((_, i) => <Card key={i}><CardHeader><Skeleton className="h-6 w-1/2" /></CardHeader><CardContent><Skeleton className="h-10 w-full" /></CardContent></Card>); if (categoryStatsError) return <Alert variant="destructive" className="col-span-full"><AlertDescription>{categoryStatsError.message}</AlertDescription></Alert>; if (!categoryStats || categoryStats.length === 0) return <p className="text-muted-foreground col-span-full text-center py-8">You are not assigned to any categories.</p>; return categoryStats.map((cat) => (<Card key={cat.name} className="hover:shadow-lg transition-shadow"><CardHeader><CardTitle className="text-primary">{cat.name}</CardTitle><CardDescription>Live statistics</CardDescription></CardHeader><CardContent><div className="space-y-3"><div className="flex justify-between items-center text-sm"><span className="flex items-center text-muted-foreground"><Users className="w-4 h-4 mr-2"/>Subscribers</span><span className="font-bold text-lg">{cat.subscriberCount}</span></div><div className="flex justify-between items-center text-sm"><span className="flex items-center text-muted-foreground"><Newspaper className="w-4 h-4 mr-2"/>Newsletters</span><span className="font-bold text-lg">{cat.newsletterCount}</span></div></div></CardContent></Card>)); };
     const renderUserManagement = () => {
@@ -275,7 +316,7 @@ const Dashboard = () => {
                 <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-sm font-medium">Your Newsletters</CardTitle><ListTodo className="h-4 w-4 text-muted-foreground" /></CardHeader><CardContent><div className="text-2xl font-bold">{isLoadingNewsletters ? <Skeleton className='w-8 h-8' /> : newsletters?.length || 0}</div></CardContent></Card>
                 <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-sm font-medium">Your Subscribers</CardTitle><Users className="h-4 w-4 text-muted-foreground" /></CardHeader><CardContent><div className="text-2xl font-bold">{isLoadingSubscribers ? <Skeleton className='w-8 h-8' /> : subscribers?.length || 0}</div></CardContent></Card>
             </div>
-            <Tabs defaultValue="create-newsletter" className="w-full">
+            <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
                 <div className="flex justify-center"><TabsList><TabsTrigger value="create-newsletter">Create Newsletter</TabsTrigger><TabsTrigger value="generated-newsletters">Newsletters History</TabsTrigger><TabsTrigger value="categories">My Categories</TabsTrigger><TabsTrigger value="users">Users</TabsTrigger></TabsList></div>
                 <TabsContent value="create-newsletter" className="mt-6">
                     <Card>

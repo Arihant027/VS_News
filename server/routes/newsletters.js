@@ -144,6 +144,14 @@ router.post('/generate-and-save', auth, async (req, res) => {
         await newNewsletter.save();
         console.log(`[PDF LOG] Successfully saved newsletter with ID: ${newNewsletter._id}`);
         
+        const notification = new Notification({
+            user: req.user,
+            newsletter: newNewsletter._id,
+            message: `New newsletter "${newNewsletter.title}" generated. Check it out in "Newsletter History" to share and view.`,
+            actionUrl: '/dashboard?tab=generated-newsletters'
+        });
+        await notification.save();
+        
         // 4. Send the generated PDF back to the client
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `inline; filename="${title.replace(/\s/g, '_')}.pdf"`);
