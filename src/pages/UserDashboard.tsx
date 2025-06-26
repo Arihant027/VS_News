@@ -58,7 +58,32 @@ type PreferencesFormData = z.infer<typeof preferencesSchema>;
 
 const fetchAllCategories = (token: string | null): Promise<Category[]> => fetchWithToken('/categories', token);
 const fetchUserProfile = (token: string | null): Promise<UserProfile> => fetchWithToken('/users/me', token);
-const updateUserProfile = (token: string | null, data: Partial<PreferencesFormData>): Promise<{ user: User; token: string }> => fetchWithToken('/users/me/profile', token, { method: 'PATCH', body: JSON.stringify(data) });
+
+const updateUserProfile = async (token: string | null, data: Partial<PreferencesFormData>) => {
+    const { email, categories } = data;
+    const promises = [];
+
+    if (email) {
+        promises.push(fetchWithToken('/users/me/profile', token, { method: 'PATCH', body: JSON.stringify({ email }) }));
+    }
+
+    if (categories) {
+        promises.push(fetchWithToken('/users/me/categories', token, { method: 'PATCH', body: JSON.stringify({ categories }) }));
+    }
+
+    const responses = await Promise.all(promises);
+    
+    // If the email was updated, a new token is returned.
+    const profileResponse = responses.find(r => r.token);
+    if(profileResponse) {
+        return profileResponse;
+    }
+
+    // If only categories were updated, we need to fetch the user again to get the updated data
+    const userResponse = await fetchUserProfile(token);
+    return { user: userResponse, token };
+};
+
 
 const UserDashboard = () => {
     const { user, token, login } = useAuth();
@@ -98,7 +123,9 @@ const UserDashboard = () => {
         mutationFn: (data: PreferencesFormData) => updateUserProfile(token, data),
         onSuccess: (data) => { 
             toast.success("Profile updated successfully!"); 
-            login(data.user, data.token);
+            if (data.token) {
+              login(data.user, data.token);
+            }
             queryClient.invalidateQueries({ queryKey: ['userProfile'] });
             reset({ email: data.user.email, categories: data.user.categories || [] });
         },

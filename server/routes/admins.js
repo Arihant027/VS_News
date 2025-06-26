@@ -399,31 +399,44 @@ router.post('/super-add-user', auth, async (req, res) => {
     }
 });
 
-router.patch('/user/:id/subscriptions', auth, async (req, res) => {
+router.patch('/user/:id/details', auth, async (req, res) => {
     try {
         const requester = await User.findById(req.user);
         if (!requester || requester.userType !== 'superadmin') {
             return res.status(403).json({ message: 'Access denied. Superadmin permission required.' });
         }
-        const { categories } = req.body;
-        if (!Array.isArray(categories)) {
-            return res.status(400).json({ message: 'A valid categories array is required.' });
-        }
+
+        const { name, email, categories } = req.body;
+
         const userToUpdate = await User.findById(req.params.id);
         if (!userToUpdate) {
             return res.status(404).json({ message: 'User not found.' });
         }
         if (userToUpdate.userType !== 'user') {
-            return res.status(400).json({ message: 'Subscriptions can only be edited for regular users.' });
+            return res.status(400).json({ message: 'This route is for updating regular users only.' });
         }
-        const updatedUser = await User.findByIdAndUpdate(
-            req.params.id,
-            { categories: categories },
-            { new: true }
-        ).select('-password');
+        
+        if (name) {
+            userToUpdate.name = name;
+        }
+
+        if (email && email !== userToUpdate.email) {
+            const existingUser = await User.findOne({ email });
+            if (existingUser && existingUser._id.toString() !== req.params.id) {
+                return res.status(400).json({ message: 'This email is already in use by another account.' });
+            }
+            userToUpdate.email = email;
+        }
+
+        if (Array.isArray(categories)) {
+            userToUpdate.categories = categories;
+        }
+
+        const updatedUser = await userToUpdate.save();
+
         res.json(updatedUser);
     } catch (err) {
-        res.status(500).json({ message: 'Server error while updating user subscriptions.', error: err.message });
+        res.status(500).json({ message: 'Server error while updating user details.', error: err.message });
     }
 });
 

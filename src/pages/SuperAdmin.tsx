@@ -61,10 +61,12 @@ const addUserSchema = z.object({
 });
 type AddUserFormData = z.infer<typeof addUserSchema>;
 
-const editSubscriptionsSchema = z.object({
+const editUserSchema = z.object({
+  name: z.string().min(2, "Name is required."),
+  email: z.string().email("Invalid email address."),
   categories: z.array(z.string()).default([]),
 });
-type EditSubscriptionsFormData = z.infer<typeof editSubscriptionsSchema>;
+type EditUserFormData = z.infer<typeof editUserSchema>;
 
 
 const SuperAdmin = () => {
@@ -88,7 +90,7 @@ const SuperAdmin = () => {
   const adminForm = useForm<AdminFormData>({ resolver: zodResolver(adminSchema), defaultValues: { categories: [] } });
   const categoryForm = useForm<CategoryFormData>({ resolver: zodResolver(categorySchema) });
   const addUserForm = useForm<AddUserFormData>({ resolver: zodResolver(addUserSchema), defaultValues: { name: '', email: '', categories: [] } });
-  const editSubscriptionsForm = useForm<EditSubscriptionsFormData>({ resolver: zodResolver(editSubscriptionsSchema) });
+  const editUserForm = useForm<EditUserFormData>({ resolver: zodResolver(editUserSchema) });
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentDateTime(new Date()), 1000);
@@ -113,9 +115,13 @@ const SuperAdmin = () => {
 
   useEffect(() => {
     if (editingUser) {
-      editSubscriptionsForm.reset({ categories: editingUser.categories });
+      editUserForm.reset({ 
+        name: editingUser.name,
+        email: editingUser.email,
+        categories: editingUser.categories 
+      });
     }
-  }, [editingUser, editSubscriptionsForm]);
+  }, [editingUser, editUserForm]);
 
   const { data: admins, isLoading: isLoadingAdmins, error: adminsError } = useQuery<Admin[], Error>({ queryKey: ['admins'], queryFn: () => fetchWithToken('/admins', token), enabled: !!token });
   const { data: categories, isLoading: isLoadingCategories, error: categoriesError } = useQuery<Category[], Error>({ queryKey: ['categories'], queryFn: () => fetchWithToken('/categories', token), enabled: !!token });
@@ -127,7 +133,21 @@ const SuperAdmin = () => {
   const removeCategoryMutation = useMutation<{ message: string }, Error, string>({ mutationFn: (categoryId: string) => fetchWithToken(`/categories/${categoryId}`, token, { method: 'DELETE' }), onSuccess: () => { toast.success("Category removed successfully!"); queryClient.invalidateQueries({ queryKey: ['categories'] }); queryClient.invalidateQueries({ queryKey: ['admins'] }); }, onError: (err: Error) => toast.error(err.message), });
   const deleteUserMutation = useMutation<{ message: string }, Error, string>({ mutationFn: (userId: string) => fetchWithToken(`/admins/user/${userId}`, token, { method: 'DELETE' }), onSuccess: () => { toast.success("User deleted successfully!"); queryClient.invalidateQueries({ queryKey: ['allRegularUsers'] }); }, onError: (err: Error) => { toast.error(err.message || "Failed to delete user."); } });
   const addUserMutation = useMutation<{ message: string; user: { _id: string; name: string; email: string; }; password_was: string }, Error, AddUserFormData>({ mutationFn: (data: AddUserFormData) => fetchWithToken('/admins/super-add-user', token, { method: 'POST', body: JSON.stringify(data) }), onSuccess: (data) => { toast.success(data.message); queryClient.invalidateQueries({ queryKey: ['allRegularUsers'] }); setIsAddUserDialogOpen(false); setCreatedUserInfo({ ...data.user, password_was: data.password }); addUserForm.reset(); }, onError: (err: Error) => toast.error(err.message), });
-  const updateSubscriptionsMutation = useMutation<RegularUser, Error, { userId: string, categories: string[] }>({ mutationFn: (data: { userId: string, categories: string[] }) => fetchWithToken(`/admins/user/${data.userId}/subscriptions`, token, { method: 'PATCH', body: JSON.stringify({ categories: data.categories }) }), onSuccess: () => { toast.success("User subscriptions updated successfully!"); queryClient.invalidateQueries({ queryKey: ['allRegularUsers'] }); setEditingUser(null); }, onError: (err: Error) => toast.error(err.message || "Failed to update subscriptions.") });
+  const updateUserMutation = useMutation<RegularUser, Error, { userId: string } & EditUserFormData>({
+    mutationFn: (data) => {
+        const { userId, ...payload } = data;
+        return fetchWithToken(`/admins/user/${userId}/details`, token, { 
+            method: 'PATCH', 
+            body: JSON.stringify(payload) 
+        });
+    },
+    onSuccess: () => {
+        toast.success("User details updated successfully!");
+        queryClient.invalidateQueries({ queryKey: ['allRegularUsers'] });
+        setEditingUser(null);
+    },
+    onError: (err: Error) => toast.error(err.message || "Failed to update user.")
+  });
   const shareUserDetailsMutation = useMutation<{ message: string }, Error, { email: string; name: string; password_was: string }>({
     mutationFn: (data) => fetchWithToken('/admins/share-new-user-details', token, { method: 'POST', body: JSON.stringify({ email: data.email, name: data.name, password: data.password_was }) }),
     onSuccess: (data) => { toast.success(data.message); },
@@ -139,14 +159,14 @@ const SuperAdmin = () => {
     onError: (err: Error) => { toast.error(err.message || "Failed to reset password."); }
   });
 
-  const onSubscriptionSubmit = (data: EditSubscriptionsFormData) => {
+  const onEditUserSubmit = (data: EditUserFormData) => {
     if (!editingUser) {
       toast.error("Error: No user selected for editing.");
       return;
     }
-    updateSubscriptionsMutation.mutate({
+    updateUserMutation.mutate({
       userId: editingUser._id,
-      categories: data.categories
+      ...data
     });
   };
 
@@ -310,7 +330,10 @@ const SuperAdmin = () => {
                         </CardHeader>
                         <CardContent>
                             <p className="text-5xl font-semibold text-primary">
-                                {currentDateTime.toLocaleTimeString()}
+                                {currentDateTime.toLocaleTimeString([], {
+                                    hour: 'numeric',
+                                    minute: '2-digit'
+                                })}
                             </p>
                             <p className="text-muted-foreground mt-2">
                                 Select a tab above to get started.
@@ -428,14 +451,32 @@ const SuperAdmin = () => {
 
       <Dialog open={!!editingUser} onOpenChange={() => setEditingUser(null)}>
         <DialogContent className="sm:max-w-md">
-          <DialogHeader><DialogTitle>Edit Subscriptions</DialogTitle><DialogDescription>Manage category subscriptions for <span className="font-semibold">{editingUser?.name}</span>.</DialogDescription></DialogHeader>
-          <form onSubmit={editSubscriptionsForm.handleSubmit(onSubscriptionSubmit)} className="space-y-4 pt-4">
-            <div className="space-y-2 rounded-md border p-4 max-h-60 overflow-y-auto">
-              <Controller name="categories" control={editSubscriptionsForm.control} render={({ field }) => ( <> {isLoadingCategories ? <Skeleton className='h-5 w-20'/> : categories?.map((category) => (<div key={category._id} className="flex items-center space-x-2"><Checkbox id={`edit-cat-${category._id}`} checked={field.value?.includes(category.name)} onCheckedChange={(checked) => { const current = field.value || []; const newCategories = checked ? [...current, category.name] : current.filter(name => name !== category.name); field.onChange(newCategories); }}/><label htmlFor={`edit-cat-${category._id}`} className="text-sm font-medium">{category.name}</label></div>))} </> )}/>
+          <DialogHeader>
+            <DialogTitle>Edit User Details</DialogTitle>
+            <DialogDescription>
+              Update the user's details and subscriptions for <span className="font-semibold">{editingUser?.name}</span>.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={editUserForm.handleSubmit(onEditUserSubmit)} className="space-y-4 pt-4">
+            <div>
+              <Label htmlFor="edit-user-name">Full Name</Label>
+              <Input id="edit-user-name" {...editUserForm.register("name")} />
+              {editUserForm.formState.errors.name && <p className="text-sm text-destructive mt-1">{editUserForm.formState.errors.name.message}</p>}
+            </div>
+             <div>
+              <Label htmlFor="edit-user-email">Email Address</Label>
+              <Input id="edit-user-email" type="email" {...editUserForm.register("email")} />
+              {editUserForm.formState.errors.email && <p className="text-sm text-destructive mt-1">{editUserForm.formState.errors.email.message}</p>}
+            </div>
+            <div className="space-y-2">
+              <Label>Subscriptions</Label>
+              <div className="rounded-md border p-4 max-h-60 overflow-y-auto">
+                <Controller name="categories" control={editUserForm.control} render={({ field }) => ( <> {isLoadingCategories ? <Skeleton className='h-5 w-20'/> : categories?.map((category) => (<div key={category._id} className="flex items-center space-x-2"><Checkbox id={`edit-cat-${category._id}`} checked={field.value?.includes(category.name)} onCheckedChange={(checked) => { const current = field.value || []; const newCategories = checked ? [...current, category.name] : current.filter(name => name !== category.name); field.onChange(newCategories); }}/><label htmlFor={`edit-cat-${category._id}`} className="text-sm font-medium">{category.name}</label></div>))} </> )}/>
+              </div>
             </div>
             <DialogFooter>
               <Button type="button" variant="secondary" onClick={() => setEditingUser(null)}>Cancel</Button>
-              <Button type="submit" disabled={updateSubscriptionsMutation.isPending}>{updateSubscriptionsMutation.isPending ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving...</> : "Save Changes"}</Button>
+              <Button type="submit" disabled={updateUserMutation.isPending}>{updateUserMutation.isPending ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving...</> : "Save Changes"}</Button>
             </DialogFooter>
           </form>
         </DialogContent>

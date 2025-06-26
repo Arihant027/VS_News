@@ -23,7 +23,6 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/t
 
 const settingsSchema = z.object({
     name: z.string().min(2, "Name must be at least 2 characters."),
-    email: z.string().email("Invalid email address.").optional(),
     password: z.string().min(8, "Password must be at least 8 characters.").optional().or(z.literal('')),
     confirmPassword: z.string().optional(),
 }).refine((data) => data.password === data.confirmPassword, {
@@ -49,7 +48,7 @@ export const AdminHeader = () => {
 
   const form = useForm<SettingsFormData>({
     resolver: zodResolver(settingsSchema),
-    defaultValues: { name: user?.name || '', email: user?.email || '', password: '', confirmPassword: '' }
+    defaultValues: { name: user?.name || '', password: '', confirmPassword: '' }
   });
 
   const { data: notifications } = useQuery<Notification[], Error>({
@@ -95,7 +94,7 @@ export const AdminHeader = () => {
   });
 
   useEffect(() => {
-    if (user) form.reset({ name: user.name, email: user.email, password: '', confirmPassword: '' });
+    if (user) form.reset({ name: user.name, password: '', confirmPassword: '' });
   }, [user, isSettingsDialogOpen, form]);
 
   const onSubmitSettings = (data: SettingsFormData) => updateProfileMutation.mutate(data);
@@ -236,8 +235,12 @@ export const AdminHeader = () => {
             </div>
             <div className="space-y-2">
                 <Label htmlFor="email">Email</Label>
-                <Input id="email" type="email" {...form.register("email")} />
-                {form.formState.errors.email && <p className="text-sm text-destructive mt-1">{form.formState.errors.email.message}</p>}
+                <Input
+                    id="email"
+                    type="email"
+                    value={user?.email || ''}
+                    disabled
+                />
             </div>
             <div className="space-y-2">
                 <Label htmlFor="password">New Password</Label>

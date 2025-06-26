@@ -109,7 +109,7 @@ const Dashboard = () => {
         onSuccess: (data) => {
             toast.success(data.message);
             setIsAddUserDialogOpen(false);
-            setCreatedUserInfo({ ...data.user, password_was: data.password });
+            setCreatedUserInfo({ ...data.user, password_was: data.password_was });
             addUserForm.reset();
         },
         onError: (err: Error) => toast.error(err.message),
@@ -345,7 +345,10 @@ const Dashboard = () => {
                         </CardHeader>
                         <CardContent>
                             <p className="text-5xl font-semibold text-primary">
-                                {currentDateTime.toLocaleTimeString()}
+                                {currentDateTime.toLocaleTimeString([], {
+                                    hour: 'numeric',
+                                    minute: '2-digit'
+                                })}
                             </p>
                             <p className="text-muted-foreground mt-2">
                                 Select a tab above to get started.
